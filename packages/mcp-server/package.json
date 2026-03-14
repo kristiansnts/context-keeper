@@ -1,0 +1,21 @@
+{
+  "name": "@context-keeper/mcp-server",
+  "version": "0.1.0",
+  "description": "MCP server for context-keeper — works with Claude Code, Cursor, Continue.dev, Windsurf",
+  "main": "dist/index.js",
+  "bin": {
+    "ctx-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc && chmod +x dist/index.js",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@context-keeper/core": "*",
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.4.0"
+  }
+}

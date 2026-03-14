@@ -1,0 +1,20 @@
+{
+  "name": "context-keeper",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Universal AI memory layer — works with GitHub Copilot, Claude Code, Cursor, Continue, and any MCP client",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "dev": "npm run dev --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "author": "rpay",
+  "license": "MIT"
+}

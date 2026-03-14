@@ -1,0 +1,15 @@
+node_modules/
+dist/
+*.js.map
+*.d.ts
+!*.config.js
+.env
+.env.local
+
+# context-keeper local DB (gitignore the DB, keep the markdown files)
+.context/context.db
+.context/context.db-shm
+.context/context.db-wal
+
+# VS Code extension
+*.vsix
