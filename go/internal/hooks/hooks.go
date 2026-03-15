@@ -193,12 +193,12 @@ func stop(store *storage.Storage, cfg storage.Config) error {
 	return nil
 }
 
-// cleanInstructionsFile removes the context-keeper instructions file written at session start.
+// cleanInstructionsFile removes context-keeper instruction files written during the session.
 func cleanInstructionsFile(projectRoot string) {
-	path := filepath.Join(projectRoot, ".github", "instructions", "context-keeper.instructions.md")
-	_ = os.Remove(path)
+	dir := filepath.Join(projectRoot, ".github", "instructions")
+	_ = os.Remove(filepath.Join(dir, "context-keeper.instructions.md"))
+	_ = os.Remove(filepath.Join(dir, "context-keeper-prompt.instructions.md"))
 	// Remove the instructions dir only if it's now empty
-	dir := filepath.Dir(path)
 	if entries, err := os.ReadDir(dir); err == nil && len(entries) == 0 {
 		_ = os.Remove(dir)
 	}
@@ -254,8 +254,31 @@ func userPrompt(store *storage.Storage, cfg storage.Config) error {
 	if sb.Len() > 0 {
 		fmt.Print(sb.String())
 		_ = appendPromptHit(cfg)
+
+		// Also write to a per-prompt instructions file for Copilot CLI.
+		// Copilot re-reads instruction files on each new prompt, so writing here
+		// means the next user prompt will have this context injected.
+		// (one turn late — unavoidable since Copilot reads before hook fires for current prompt)
+		writePromptInstructionsFile(cfg.ProjectRoot, sb.String())
 	}
 	return nil
+}
+
+// writePromptInstructionsFile writes per-prompt relevant memory to a separate
+// instructions file so Copilot CLI picks it up on the next prompt.
+// Uses a separate file from context-keeper.instructions.md to avoid clobbering
+// session-start rules and project memory.
+func writePromptInstructionsFile(projectRoot, content string) {
+	dir := filepath.Join(projectRoot, ".github", "instructions")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return
+	}
+	frontmatter := "---\napplyTo: \"**\"\n---\n\n"
+	_ = os.WriteFile(
+		filepath.Join(dir, "context-keeper-prompt.instructions.md"),
+		[]byte(frontmatter+content),
+		0644,
+	)
 }
 
 // ── post-tool-use ─────────────────────────────────────────────────────────────
@@ -711,14 +734,14 @@ func detectTypeHint(prompt string) string {
 		}
 	}
 
-	buildKeywords := []string{"implement", "add", "create", "build", "integrate", "write"}
+	buildKeywords := []string{"implement", "add", "create", "build", "integrate", "write", "update", "change", "modify", "redesign", "style", "layout", "component"}
 	for _, kw := range buildKeywords {
 		if strings.Contains(lower, kw) {
 			return "if this becomes reusable, save as type 'pattern' or 'decision'"
 		}
 	}
 
-	refactorKeywords := []string{"refactor", "restructure", "rename", "migrate", "move"}
+	refactorKeywords := []string{"refactor", "restructure", "rename", "migrate", "move", "reorganize"}
 	for _, kw := range refactorKeywords {
 		if strings.Contains(lower, kw) {
 			return "architectural change — save as type 'decision'"
