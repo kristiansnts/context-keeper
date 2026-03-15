@@ -455,6 +455,9 @@ async function loadTab(tab) {
 // ── project & search ──────────────────────────────────────────────────────────
 function onProjectChange() {
   currentProject = document.getElementById('project-select').value;
+  // Re-seed seen IDs for new scope so existing entries don't flood live feed
+  liveSeenIds = new Set();
+  initLiveFeed();
   if (currentTab !== 'live') loadTab(currentTab);
 }
 
@@ -516,8 +519,10 @@ function prependLiveEntry(entry) {
 
 // Poll for entries not yet seen in live feed (from other CLI processes).
 async function pollLiveFeed() {
+  let url = '/api/entries';
+  if (currentProject) url += '?project=' + encodeURIComponent(currentProject);
   try {
-    const res = await fetch('/api/entries');
+    const res = await fetch(url);
     const entries = await res.json();
     if (!entries) return;
     // Prepend any new IDs in reverse order to maintain newest-first
@@ -531,8 +536,10 @@ async function pollLiveFeed() {
 
 // Seed seen IDs on load so existing entries don't flood the live feed.
 async function initLiveFeed() {
+  let url = '/api/entries';
+  if (currentProject) url += '?project=' + encodeURIComponent(currentProject);
   try {
-    const res = await fetch('/api/entries');
+    const res = await fetch(url);
     const entries = await res.json();
     if (entries) entries.forEach(e => liveSeenIds.add(e.ID));
   } catch (_) {}
