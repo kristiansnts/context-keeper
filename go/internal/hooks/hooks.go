@@ -108,6 +108,8 @@ func sessionStart(store *storage.Storage, cfg storage.Config) error {
 
 	content := sb.String()
 
+	store.Log("session-start", fmt.Sprintf("Session started | project: %s", filepath.Base(cfg.ProjectRoot)), "info")
+
 	// Print to stdout for Claude Code (which injects hook stdout into system prompt).
 	fmt.Print(content)
 
@@ -189,6 +191,7 @@ func stop(store *storage.Storage, cfg storage.Config) error {
 	if err := store.AddSessionSummary(sessionEntries, obsContent); err != nil {
 		return err
 	}
+	store.Log("stop", fmt.Sprintf("Session ended | %d entries saved", len(sessionEntries)), "info")
 	cleanInstructionsFile(cfg.ProjectRoot)
 	return nil
 }
@@ -255,6 +258,12 @@ func userPrompt(store *storage.Storage, cfg storage.Config) error {
 	if sb.Len() > 0 {
 		fmt.Print(sb.String())
 		_ = appendPromptHit(cfg)
+
+		q := prompt
+		if len(q) > 50 {
+			q = q[:50] + "…"
+		}
+		store.Log("user-prompt", fmt.Sprintf("Prompt hit | '%s' → %d results", q, len(all)), "info")
 
 		// Also write to a per-prompt instructions file for Copilot CLI.
 		// Copilot re-reads instruction files on each new prompt, so writing here
@@ -501,6 +510,7 @@ func postToolUseCopilot(store *storage.Storage, cfg storage.Config, data []byte)
 				Tags:    []string{"auto-captured", "tool-failure"},
 				Source:  &source,
 			})
+			store.Log("gotcha-auto", fmt.Sprintf("Auto-captured | %s", titleErr), "warn")
 			return nil
 		}
 		// Success: record observation if not noisy
@@ -600,6 +610,7 @@ func postToolUseClaudeCode(store *storage.Storage, cfg storage.Config, data []by
 				Tags:    []string{"auto-captured", "tool-failure"},
 				Source:  &source,
 			})
+			store.Log("gotcha-auto", fmt.Sprintf("Auto-captured | %s", titleErr), "warn")
 			return nil
 		}
 

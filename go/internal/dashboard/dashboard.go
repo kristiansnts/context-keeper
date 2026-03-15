@@ -44,13 +44,20 @@ func Start(store *storage.Storage, port string) {
 	// Hook into storage so live feed gets new entries via SSE.
 	store.OnAdd(func(e storage.Entry) {
 		b, _ := json.Marshal(e)
-		hub.broadcast(b)
+		hub.broadcastEvent("memory", b)
+	})
+
+	// Hook into storage so logs tab gets live updates via SSE.
+	store.OnLog(func(e storage.LogEntry) {
+		b, _ := json.Marshal(e)
+		hub.broadcastEvent("log", b)
 	})
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/entries", apiEntries(store))
 	mux.HandleFunc("/api/projects", apiProjects(store))
 	mux.HandleFunc("/api/stats", apiStats(store))
+	mux.HandleFunc("/api/logs", apiLogs(store))
 	mux.HandleFunc("/events", sseHandler(hub))
 	mux.HandleFunc("/", serveUI)
 
@@ -94,12 +101,13 @@ func (h *sseHub) unsubscribe(ch chan []byte) {
 	close(ch)
 }
 
-func (h *sseHub) broadcast(data []byte) {
+func (h *sseHub) broadcastEvent(eventName string, data []byte) {
+	msg := fmt.Appendf(nil, "event: %s\ndata: %s\n\n", eventName, data)
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for ch := range h.clients {
 		select {
-		case ch <- data:
+		case ch <- msg:
 		default:
 		}
 	}
@@ -127,7 +135,7 @@ func sseHandler(hub *sseHub) http.HandlerFunc {
 				if !ok {
 					return
 				}
-				fmt.Fprintf(w, "event: memory\ndata: %s\n\n", data)
+				fmt.Fprint(w, string(data))
 				if f, ok := w.(http.Flusher); ok {
 					f.Flush()
 				}
@@ -242,6 +250,22 @@ func apiStats(store *storage.Storage) http.HandlerFunc {
 	}
 }
 
+func apiLogs(store *storage.Storage) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		logs, err := store.ListLogs(200)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if logs == nil {
+			logs = []storage.LogEntry{}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		_ = json.NewEncoder(w).Encode(logs)
+	}
+}
+
 func serveUI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write([]byte(uiHTML))
@@ -326,6 +350,22 @@ var uiHTML = `<!DOCTYPE html>
     .stat span { font-size: 18px; font-weight: 700; color: #4caf50; line-height: 1.2; }
     .stat label { font-size: 10px; color: #555; text-transform: uppercase; letter-spacing: 0.08em; margin-top: 2px; white-space: nowrap; }
 
+    /* Log entries */
+    .log-entry { display: flex; align-items: baseline; gap: 10px; padding: 5px 0; border-bottom: 1px solid #1a1a1a; font-size: 12px; font-family: 'SF Mono', 'Fira Code', monospace; }
+    .log-entry.live-new { animation: fadeIn 0.3s ease; }
+    .log-time { color: #444; flex-shrink: 0; }
+    .log-event { flex-shrink: 0; padding: 1px 7px; border-radius: 3px; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+    .log-event-session-start { background: #1a2a1a; color: #69f0ae; }
+    .log-event-stop         { background: #1a1a2a; color: #80cbc4; }
+    .log-event-user-prompt  { background: #1e3a5f; color: #64b5f6; }
+    .log-event-search       { background: #2a2a0a; color: #fff176; }
+    .log-event-remember     { background: #1a3a1a; color: #81c784; }
+    .log-event-gotcha-auto  { background: #3a2a0a; color: #ffb74d; }
+    .log-event-default      { background: #222; color: #888; }
+    .log-detail { color: #bbb; flex: 1; }
+    .log-level-warn  .log-detail { color: #ffb74d; }
+    .log-level-error .log-detail { color: #ef5350; }
+
     /* Scrollbar */
     ::-webkit-scrollbar { width: 5px; height: 5px; }
     ::-webkit-scrollbar-track { background: transparent; }
@@ -366,6 +406,7 @@ var uiHTML = `<!DOCTYPE html>
     <div class="tab" onclick="showTab('api-catalog')">API Catalog</div>
     <div class="tab" onclick="showTab('schema')">Schema</div>
     <div class="tab" onclick="showTab('all')">All Memory</div>
+    <div class="tab" onclick="showTab('logs')">Logs</div>
   </div>
 
   <main id="main">
@@ -381,10 +422,11 @@ var uiHTML = `<!DOCTYPE html>
     <div id="tab-api-catalog" style="display:none"></div>
     <div id="tab-schema" style="display:none"></div>
     <div id="tab-all" style="display:none"></div>
+    <div id="tab-logs" style="display:none"></div>
   </main>
 
 <script>
-const TABS = ['live','decisions','conventions','gotchas','patterns','rejected','workspace','sessions','file-map','api-catalog','schema','all'];
+const TABS = ['live','decisions','conventions','gotchas','patterns','rejected','workspace','sessions','file-map','api-catalog','schema','all','logs'];
 const TYPE_MAP = { decisions:'decision', conventions:'convention', gotchas:'gotcha', patterns:'pattern', rejected:'rejected', workspace:'workspace', sessions:'session', 'file-map':'file-map', 'api-catalog':'api-catalog', schema:'schema', all:'' };
 
 let currentTab = 'live';
@@ -432,7 +474,8 @@ function showTab(tab) {
   document.querySelectorAll('main > div').forEach(d => d.style.display = 'none');
   document.getElementById('tab-' + tab).style.display = 'block';
   currentTab = tab;
-  if (tab !== 'live') loadTab(tab);
+  if (tab === 'logs') loadLogs();
+  else if (tab !== 'live') loadTab(tab);
 }
 
 async function loadTab(tab) {
@@ -498,6 +541,10 @@ function connectSSE() {
     liveSeenIds.add(entry.ID);
     prependLiveEntry(entry);
   });
+  es.addEventListener('log', ev => {
+    const entry = JSON.parse(ev.data);
+    prependLogEntry(entry);
+  });
   es.onopen = () => {
     document.getElementById('status-text').textContent = 'Connected';
     document.getElementById('dot').style.background = '#4caf50';
@@ -546,6 +593,41 @@ async function initLiveFeed() {
 }
 
 setInterval(pollLiveFeed, 5000);
+
+// ── logs ──────────────────────────────────────────────────────────────────────
+function logEventClass(event) {
+  const map = { 'session-start':'session-start', 'stop':'stop', 'user-prompt':'user-prompt', 'search':'search', 'remember':'remember', 'gotcha-auto':'gotcha-auto' };
+  return 'log-event-' + (map[event] || 'default');
+}
+
+function renderLogEntry(e, isNew) {
+  const ts = e.CreatedAt ? new Date(e.CreatedAt).toLocaleTimeString() : '';
+  return '<div class="log-entry log-level-' + esc(e.Level) + (isNew ? ' live-new' : '') + '">' +
+    '<span class="log-time">' + esc(ts) + '</span>' +
+    '<span class="log-event ' + logEventClass(e.Event) + '">' + esc(e.Event) + '</span>' +
+    '<span class="log-detail">' + esc(e.Detail) + '</span>' +
+    '</div>';
+}
+
+async function loadLogs() {
+  const el = document.getElementById('tab-logs');
+  try {
+    const res = await fetch('/api/logs');
+    const logs = await res.json();
+    if (!logs || !logs.length) { el.innerHTML = '<div class="empty">No activity yet.</div>'; return; }
+    el.innerHTML = logs.map(e => renderLogEntry(e, false)).join('');
+  } catch (_) {
+    el.innerHTML = '<div class="empty">Failed to load logs.</div>';
+  }
+}
+
+function prependLogEntry(entry) {
+  if (currentTab !== 'logs') return;
+  const el = document.getElementById('tab-logs');
+  const empty = el.querySelector('.empty');
+  if (empty) empty.remove();
+  el.insertAdjacentHTML('afterbegin', renderLogEntry(entry, true));
+}
 
 // ── stats ─────────────────────────────────────────────────────────────────────
 function animateNumber(el, target, suffix) {

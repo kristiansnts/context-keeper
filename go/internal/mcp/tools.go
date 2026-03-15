@@ -86,6 +86,7 @@ func registerTools(s *server.MCPServer, store *storage.Storage, cfg storage.Conf
 		if err != nil {
 			return mcpgo.NewToolResultError(err.Error()), nil
 		}
+		store.Log("remember", fmt.Sprintf("[%s] %s [id:%d]", entry.Type, entry.Title, entry.ID), "info")
 		return mcpgo.NewToolResultText(fmt.Sprintf("✅ Saved [%s] %s [id:%d]", entry.Type, entry.Title, entry.ID)), nil
 	})
 
@@ -160,6 +161,12 @@ func registerTools(s *server.MCPServer, store *storage.Storage, cfg storage.Conf
 		if err != nil {
 			return mcpgo.NewToolResultError(err.Error()), nil
 		}
+
+		q := query
+		if len(q) > 50 {
+			q = q[:50] + "…"
+		}
+		store.Log("search", fmt.Sprintf("search('%s', scope=%s) → %d results", q, scope, len(results)), "info")
 
 		if len(results) == 0 {
 			return mcpgo.NewToolResultText("No results found."), nil

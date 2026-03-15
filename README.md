@@ -11,7 +11,7 @@
     <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License">
   </a>
   <a href="plugin/.claude-plugin/plugin.json">
-    <img src="https://img.shields.io/badge/version-0.0.3-green.svg" alt="Version">
+    <img src="https://img.shields.io/badge/version-0.1.0-green.svg" alt="Version">
   </a>
   <a href="https://github.com/kristiansnts/context-keeper">
     <img src="https://img.shields.io/github/stars/kristiansnts/context-keeper?style=social" alt="Stars">
@@ -67,7 +67,10 @@ Restart your CLI after installing. Memory loads automatically on every session s
 - 🎯 **Action-Aware Hints** — Detects bug fix vs implementation vs refactor and hints the right save type
 - 📜 **Decision History** — Full evolution trail for every architectural decision
 - 🚫 **Rejected Plans** — Captures abandoned approaches so Claude never re-proposes them
-- 🖥️ **Live Dashboard** — Real-time memory feed at `http://localhost:7374`
+- 🗂️ **File Maps, API Catalog & Schema** — Cache where features live, endpoint specs, and DB field types to eliminate file re-exploration
+- ⏱️ **Staleness Tagging** — Every entry carries a `staleness_risk` level (`low`/`medium`/`high`) auto-defaulted by type
+- 📈 **Session Telemetry** — Tracks exploration ratio, steps before first edit, and prompt memory hits per session
+- 🖥️ **Live Dashboard** — Real-time memory feed at `http://localhost:7374` with stats bar and 12-tab UI
 - ⚡ **Go-powered** — Zero Node.js runtime dependency; single pre-compiled binary per platform
 - 🤖 **Fully Automatic** — Saves and retrieves without being asked
 
@@ -77,10 +80,10 @@ Restart your CLI after installing. Memory loads automatically on every session s
 
 **5 Lifecycle Hooks:**
 
-1. **`SessionStart`** — Injects compact memory index + workspace memory as system message
-2. **`UserPromptSubmit`** — Searches relevant memory per prompt; detects action type and hints Claude
-3. **`PostToolUse`** — Auto-captures Bash failures as `gotcha` entries
-4. **`Stop`** — Auto-saves session summary of everything learned
+1. **`SessionStart`** — Injects compact memory index + workspace memory as system message; auto-starts dashboard subprocess if not already running
+2. **`UserPromptSubmit`** — Searches relevant memory per prompt; detects action type and hints Claude; tracks memory injection hit count
+3. **`PostToolUse`** — Captures `Read`/`Glob`/`Grep`/`LS` as exploration observations and `Edit`/`Write` as edit observations for session telemetry
+4. **`Stop`** — Auto-saves session summary including `exploration_ratio`, `steps_before_first_edit`, `files_explored`, and prompt hit count
 5. **`ExitPlanMode`** — Reminds Claude to save rejected plans as `rejected` entries
 
 **Session Flow:**
@@ -175,8 +178,18 @@ remember(type="pattern", title="Add API endpoint", content="1. Create route...\n
 | Knowledge shared across all projects | `workspace` — API shapes, auth flows, env conventions |
 | Project-specific coding convention | `convention` |
 | Background context about the project | `context` |
+| Which file owns a feature | `file-map` — e.g. "auth logic lives in `auth_service.go`"; local-only |
+| API endpoint details | `api-catalog` — method, path, auth flag, handler; mirrored to workspace DB |
+| DB table / field definition | `schema` — types, constraints, gotchas; mirrored to workspace DB |
 
 All types are stored in `.context/context.db` (SQLite + FTS5, gitignored).
+
+**Staleness tagging** — every entry carries a `staleness_risk` level auto-defaulted by type:
+- `high` — `api-catalog`, `schema`, `file-map` (change frequently)
+- `medium` — `decision`, `pattern`
+- `low` — `gotcha`, `convention`, `context`, `note`, `rejected`, `workspace`
+
+Pass `staleness_risk` explicitly to `remember()` to override the default.
 
 ---
 
@@ -230,12 +243,23 @@ Rejected plans accumulate over time — Claude stops re-proposing approaches you
 | `/ck-context` | Reload full project memory into the current conversation |
 | `/decisions` | View all architectural decisions with rationale |
 | `/history [title or id]` | Show how a decision evolved — what changed and why |
+| `/import-session [N\|all] [LIMIT]` | Scan past Claude Code and Copilot CLI session history and import discovered decisions, patterns, gotchas, file-maps, API catalog, and schema entries |
+
+**`/import-session` options:**
+- `/import-session` — import last 5 sessions per source for the current project
+- `/import-session 10` — import last 10 sessions per source
+- `/import-session all` — scan all projects in session history
+- `/import-session all 3` — all projects, last 3 sessions each
+- Deduplicates automatically (calls `search()` before saving); caps at 20 new entries per project
 
 ---
 
 ## Live Dashboard
 
-Open **http://localhost:7374** while Claude works to watch memory being saved in real time.
+Open **http://localhost:7374** while Claude works to watch memory being saved in real time. The dashboard auto-starts when a session begins — no manual launch needed.
+
+**Stats bar** — five live metrics at the top, auto-refreshing every 30s:
+- Entries saved · Memory hits · Est. tokens saved · Avg exploration ratio · Sessions tracked
 
 | Tab | Shows |
 |---|---|
@@ -246,7 +270,10 @@ Open **http://localhost:7374** while Claude works to watch memory being saved in
 | Patterns | Saved solution patterns |
 | Rejected | Abandoned approaches and plans |
 | Workspace | Cross-project shared memory |
-| Sessions | Auto-saved session summaries |
+| Sessions | Auto-saved session summaries with telemetry |
+| File Map | Feature-to-file mappings |
+| API Catalog | Endpoint registry |
+| Schema | DB table and field definitions |
 | All Memory | Everything |
 
 The dashboard also includes a **project dropdown** to filter memory across all projects tracked in the global DB (`~/.context-keeper/global.db`).
@@ -301,14 +328,17 @@ GOOS=windows GOARCH=amd64 go build -o ../plugin/server/bin/context-keeper-window
 plugin/                          # Installable plugin (shipped to users)
 ├── .claude-plugin/plugin.json   # Plugin metadata
 ├── .mcp.json                    # MCP config with ${CLAUDE_PLUGIN_ROOT} vars
-├── hooks/hooks.json             # All 5 hook definitions
+├── hooks/
+│   ├── hooks.json               # Claude Code hook definitions (5 hooks)
+│   └── copilot-hooks.json       # GitHub Copilot CLI hook config
 ├── server/
 │   ├── start.js                 # Node launcher — picks correct binary per platform
 │   └── bin/                     # Pre-compiled Go binaries (all platforms)
 └── skills/                      # Slash command skills
     ├── ck-context/SKILL.md
     ├── decisions/SKILL.md
-    └── history/SKILL.md
+    ├── history/SKILL.md
+    └── import-session/SKILL.md
 
 go/                              # Go source
 ├── cmd/context-keeper/main.go   # Entry point (MCP server + hook runner)

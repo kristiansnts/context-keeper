@@ -1,6 +1,14 @@
 package storage
 
 const schema = `
+CREATE TABLE IF NOT EXISTS logs (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  event      TEXT NOT NULL,
+  detail     TEXT NOT NULL DEFAULT '',
+  level      TEXT NOT NULL DEFAULT 'info',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS memory (
   id               INTEGER PRIMARY KEY AUTOINCREMENT,
   type             TEXT NOT NULL DEFAULT 'note',

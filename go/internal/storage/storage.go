@@ -48,6 +48,15 @@ type SearchResult struct {
 	Score float64
 }
 
+// LogEntry is a single activity log record.
+type LogEntry struct {
+	ID        int64  `json:"ID"`
+	Event     string `json:"Event"`
+	Detail    string `json:"Detail"`
+	Level     string `json:"Level"`
+	CreatedAt string `json:"CreatedAt"`
+}
+
 // DecisionHistory contains the current version and all superseded ancestors.
 type DecisionHistory struct {
 	Current Entry
@@ -69,10 +78,51 @@ type Storage struct {
 	globalDb    *sql.DB
 	workspaceDb *sql.DB
 	onAdd       func(Entry)
+	onLog       func(LogEntry)
 }
 
 // OnAdd registers a callback invoked after every successful Add.
 func (s *Storage) OnAdd(fn func(Entry)) { s.onAdd = fn }
+
+// OnLog registers a callback invoked after every Log() call.
+func (s *Storage) OnLog(fn func(LogEntry)) { s.onLog = fn }
+
+// Log writes an activity entry to the logs table.
+func (s *Storage) Log(event, detail, level string) {
+	if level == "" {
+		level = "info"
+	}
+	res, err := s.db.Exec(`INSERT INTO logs (event, detail, level) VALUES (?, ?, ?)`, event, detail, level)
+	if err != nil || s.onLog == nil {
+		return
+	}
+	id, _ := res.LastInsertId()
+	s.onLog(LogEntry{
+		ID:        id,
+		Event:     event,
+		Detail:    detail,
+		Level:     level,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+	})
+}
+
+// ListLogs returns the most recent log entries, newest first.
+func (s *Storage) ListLogs(limit int) ([]LogEntry, error) {
+	rows, err := s.db.Query(`SELECT id, event, detail, level, created_at FROM logs ORDER BY created_at DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []LogEntry
+	for rows.Next() {
+		var e LogEntry
+		if err := rows.Scan(&e.ID, &e.Event, &e.Detail, &e.Level, &e.CreatedAt); err != nil {
+			continue
+		}
+		result = append(result, e)
+	}
+	return result, rows.Err()
+}
 
 // New opens (and initialises) all configured databases.
 func New(cfg Config) (*Storage, error) {
