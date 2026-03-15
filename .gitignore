@@ -6,10 +6,17 @@ dist/
 .env
 .env.local
 
-# context-keeper local DB (gitignore the DB, keep the markdown files)
+# context-keeper local DB and session state
 .context/context.db
 .context/context.db-shm
 .context/context.db-wal
+.context/session-start.tmp
+.context/workspace.db
+.context/workspace.db-shm
+.context/workspace.db-wal
 
 # VS Code extension
 *.vsix
+
+# Local MCP dev configuration (contains hardcoded local paths)
+/.mcp.json

@@ -1,0 +1,60 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/server/index.js\" hook session-start 2>/dev/null || true",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/server/index.js\" hook stop 2>/dev/null || true",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/server/index.js\" hook user-prompt 2>/dev/null || true",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/server/index.js\" hook post-tool-use 2>/dev/null || true",
+            "timeout": 8
+          }
+        ]
+      }
+    ],
+    "ExitPlanMode": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/server/index.js\" hook exit-plan-mode 2>/dev/null || true",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

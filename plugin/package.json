@@ -1,0 +1,12 @@
+{
+  "name": "context-keeper-plugin",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Runtime dependencies for context-keeper plugin",
+  "dependencies": {
+    "better-sqlite3": "^9.4.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

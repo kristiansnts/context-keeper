@@ -2,7 +2,7 @@
   "name": "context-keeper",
   "version": "0.0.1",
   "private": true,
-  "description": "Universal AI memory layer — works with GitHub Copilot, Claude Code, Cursor, Continue, and any MCP client",
+  "description": "Universal AI memory layer — Claude Code plugin that auto-saves decisions, conventions, and context across sessions",
   "workspaces": [
     "packages/*"
   ],
@@ -16,5 +16,8 @@
     "node": ">=18.0.0"
   },
   "author": "rpay",
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "esbuild": "^0.27.4"
+  }
 }
