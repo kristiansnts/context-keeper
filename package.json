@@ -1,23 +1,15 @@
 {
   "name": "context-keeper",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "private": true,
   "description": "Universal AI memory layer — Claude Code plugin that auto-saves decisions, conventions, and context across sessions",
-  "workspaces": [
-    "packages/*"
-  ],
   "scripts": {
-    "build": "npm run build --workspaces --if-present",
-    "dev": "npm run dev --workspaces --if-present",
-    "test": "npm run test --workspaces --if-present",
-    "lint": "npm run lint --workspaces --if-present"
+    "build": "cd go && go build -ldflags=\"-s -w\" ./cmd/context-keeper/",
+    "build:all": "cd go && GOOS=darwin GOARCH=arm64 go build -ldflags=\"-s -w\" -o ../plugin/server/bin/context-keeper-darwin-arm64 ./cmd/context-keeper/ && GOOS=darwin GOARCH=amd64 go build -ldflags=\"-s -w\" -o ../plugin/server/bin/context-keeper-darwin-amd64 ./cmd/context-keeper/ && GOOS=linux GOARCH=amd64 go build -ldflags=\"-s -w\" -o ../plugin/server/bin/context-keeper-linux-amd64 ./cmd/context-keeper/ && GOOS=linux GOARCH=arm64 go build -ldflags=\"-s -w\" -o ../plugin/server/bin/context-keeper-linux-arm64 ./cmd/context-keeper/ && GOOS=windows GOARCH=amd64 go build -ldflags=\"-s -w\" -o ../plugin/server/bin/context-keeper-windows-amd64.exe ./cmd/context-keeper/"
   },
   "engines": {
     "node": ">=18.0.0"
   },
-  "author": "rpay",
-  "license": "MIT",
-  "devDependencies": {
-    "esbuild": "^0.27.4"
-  }
+  "author": "kristiansnts",
+  "license": "MIT"
 }

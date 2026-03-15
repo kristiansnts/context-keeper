@@ -2,10 +2,10 @@
   "mcpServers": {
     "context-keeper": {
       "command": "node",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/server/index.js"],
+      "args": ["${CLAUDE_PLUGIN_ROOT}/server/start.js"],
       "env": {
         "CONTEXT_KEEPER_ROOT": "${PROJECT_ROOT}",
-        "CONTEXT_KEEPER_PORT": "7373"
+        "CONTEXT_KEEPER_PORT": "7374"
       }
     }
   }

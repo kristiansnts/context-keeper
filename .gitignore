@@ -7,6 +7,7 @@ dist/
 .env.local
 
 # context-keeper local DB and session state
+.context
 .context/context.db
 .context/context.db-shm
 .context/context.db-wal
