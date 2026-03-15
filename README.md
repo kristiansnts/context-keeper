@@ -4,17 +4,17 @@
   <br>
 </h1>
 
-<h4 align="center">Persistent memory layer built for <a href="https://claude.com/claude-code" target="_blank">Claude Code</a>.</h4>
+<h4 align="center">Persistent memory layer for <a href="https://claude.com/claude-code" target="_blank">Claude Code</a> and <a href="https://githubnext.com/projects/copilot-cli" target="_blank">GitHub Copilot CLI</a>.</h4>
 
 <p align="center">
   <a href="LICENSE">
     <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License">
   </a>
-  <a href="package.json">
-    <img src="https://img.shields.io/badge/version-0.0.1-green.svg" alt="Version">
+  <a href="plugin/.claude-plugin/plugin.json">
+    <img src="https://img.shields.io/badge/version-0.0.3-green.svg" alt="Version">
   </a>
-  <a href="package.json">
-    <img src="https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen.svg" alt="Node">
+  <a href="https://github.com/kristiansnts/context-keeper">
+    <img src="https://img.shields.io/github/stars/kristiansnts/context-keeper?style=social" alt="Stars">
   </a>
 </p>
 
@@ -31,22 +31,32 @@
 </p>
 
 <p align="center">
-  context-keeper automatically saves your project's decisions, patterns, and hard-won knowledge — then injects the right context into every Claude Code session and every prompt. No manual commands. No forgetting.
+  context-keeper automatically saves your project's decisions, patterns, and hard-won knowledge — then injects the right context into every Claude Code or GitHub Copilot session and every prompt. No manual commands. No forgetting.
 </p>
 
 ---
 
 ## Quick Start
 
-Start a new Claude Code session and run:
+context-keeper works with both **Claude Code** and **GitHub Copilot CLI**.
+
+### Claude Code
 
 ```
 /plugin marketplace add kristiansnts/context-keeper
-
 /plugin install context-keeper
 ```
 
-Restart Claude Code. Memory loads automatically on every session start.
+### GitHub Copilot CLI
+
+```
+/plugin marketplace add kristiansnts/context-keeper
+/plugin install context-keeper@context-keeper
+```
+
+Restart your CLI after installing. Memory loads automatically on every session start.
+
+> **Running both at the same time?** No conflict — they share the same SQLite DB and the dashboard runs on a single unified port (`7374`). Whichever CLI starts first owns the dashboard; the second detects it's already running and skips.
 
 **Key Features:**
 
@@ -57,7 +67,8 @@ Restart Claude Code. Memory loads automatically on every session start.
 - 🎯 **Action-Aware Hints** — Detects bug fix vs implementation vs refactor and hints the right save type
 - 📜 **Decision History** — Full evolution trail for every architectural decision
 - 🚫 **Rejected Plans** — Captures abandoned approaches so Claude never re-proposes them
-- 🖥️ **Live Dashboard** — Real-time memory feed at `http://localhost:7373`
+- 🖥️ **Live Dashboard** — Real-time memory feed at `http://localhost:7374`
+- ⚡ **Go-powered** — Zero Node.js runtime dependency; single pre-compiled binary per platform
 - 🤖 **Fully Automatic** — Saves and retrieves without being asked
 
 ---
@@ -224,11 +235,11 @@ Rejected plans accumulate over time — Claude stops re-proposing approaches you
 
 ## Live Dashboard
 
-Open **http://localhost:7373** while Claude works to watch memory being saved in real time.
+Open **http://localhost:7374** while Claude works to watch memory being saved in real time.
 
 | Tab | Shows |
 |---|---|
-| Live Feed | New entries as they're saved, animated |
+| Live Feed | New entries as they're saved, animated in real-time via SSE |
 | Decisions | All architectural decisions |
 | Conventions | All coding conventions |
 | Gotchas | Known pitfalls (including auto-captured failures) |
@@ -238,12 +249,17 @@ Open **http://localhost:7373** while Claude works to watch memory being saved in
 | Sessions | Auto-saved session summaries |
 | All Memory | Everything |
 
+The dashboard also includes a **project dropdown** to filter memory across all projects tracked in the global DB (`~/.context-keeper/global.db`).
+
 ---
 
 ## System Requirements
 
-- **Node.js**: 18.0.0 or higher
 - **Claude Code**: Latest version with plugin support
+- No Node.js runtime required — the plugin ships pre-compiled Go binaries for:
+  - macOS (arm64, amd64)
+  - Linux (arm64, amd64)
+  - Windows (amd64)
 
 ---
 
@@ -251,8 +267,8 @@ Open **http://localhost:7373** while Claude works to watch memory being saved in
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `CONTEXT_KEEPER_ROOT` | Project root — local DB at `$ROOT/.context/context.db` | `process.cwd()` |
-| `CONTEXT_KEEPER_PORT` | Dashboard port | `7373` |
+| `CONTEXT_KEEPER_ROOT` | Project root — local DB at `$ROOT/.context/context.db` | `cwd` |
+| `CONTEXT_KEEPER_PORT` | Dashboard port | `7374` |
 
 Workspace DB is auto-detected at `{monorepo-root}/.context/workspace.db`. No configuration needed.
 
@@ -264,26 +280,19 @@ Global DB lives at `~/.context-keeper/global.db` — all entries from all projec
 
 ```bash
 git clone https://github.com/kristiansnts/context-keeper
-cd context-keeper
-npm install
-npm run build        # Compiles TypeScript → plugin/server/index.js
+cd context-keeper/go
+go build ./cmd/context-keeper/
 ```
 
-**Local dev MCP config** — create `.mcp.json` at repo root (gitignored):
+**Rebuild all platform binaries:**
 
-```json
-{
-  "mcpServers": {
-    "context-keeper": {
-      "command": "node",
-      "args": ["plugin/server/index.js"],
-      "env": {
-        "CONTEXT_KEEPER_ROOT": "/your/absolute/project/path",
-        "CONTEXT_KEEPER_PORT": "7373"
-      }
-    }
-  }
-}
+```bash
+cd go
+GOOS=darwin  GOARCH=arm64 go build -o ../plugin/server/bin/context-keeper-darwin-arm64  ./cmd/context-keeper/
+GOOS=darwin  GOARCH=amd64 go build -o ../plugin/server/bin/context-keeper-darwin-amd64  ./cmd/context-keeper/
+GOOS=linux   GOARCH=amd64 go build -o ../plugin/server/bin/context-keeper-linux-amd64   ./cmd/context-keeper/
+GOOS=linux   GOARCH=arm64 go build -o ../plugin/server/bin/context-keeper-linux-arm64   ./cmd/context-keeper/
+GOOS=windows GOARCH=amd64 go build -o ../plugin/server/bin/context-keeper-windows-amd64.exe ./cmd/context-keeper/
 ```
 
 **Project structure:**
@@ -293,15 +302,22 @@ plugin/                          # Installable plugin (shipped to users)
 ├── .claude-plugin/plugin.json   # Plugin metadata
 ├── .mcp.json                    # MCP config with ${CLAUDE_PLUGIN_ROOT} vars
 ├── hooks/hooks.json             # All 5 hook definitions
-├── server/index.js              # Compiled MCP server + dashboard
+├── server/
+│   ├── start.js                 # Node launcher — picks correct binary per platform
+│   └── bin/                     # Pre-compiled Go binaries (all platforms)
 └── skills/                      # Slash command skills
     ├── ck-context/SKILL.md
     ├── decisions/SKILL.md
     └── history/SKILL.md
 
-packages/                        # Source (TypeScript)
-├── core/src/                    # Storage layer (SQLite + FTS5, multi-DB support)
-└── mcp-server/src/              # MCP server + all hook handlers
+go/                              # Go source
+├── cmd/context-keeper/main.go   # Entry point (MCP server + hook runner)
+└── internal/
+    ├── dashboard/               # HTTP dashboard server + SSE + embedded HTML
+    ├── hooks/                   # Hook handlers (session-start, stop, etc.)
+    ├── markdown/                # Context injection formatting
+    ├── mcp/                     # MCP tool definitions
+    └── storage/                 # SQLite storage, FTS5, multi-DB, migrations
 
 .claude-plugin/marketplace.json  # Marketplace registration
 ```
@@ -312,7 +328,7 @@ packages/                        # Source (TypeScript)
 
 1. Fork the repository
 2. Create a feature branch
-3. Make your changes and run `npm run build`
+3. Make your changes, rebuild binaries
 4. Submit a Pull Request
 
 ---

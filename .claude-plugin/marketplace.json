@@ -10,7 +10,7 @@
   "plugins": [
     {
       "name": "context-keeper",
-      "version": "0.0.2",
+      "version": "0.0.3",
       "source": "./plugin",
       "description": "Universal AI memory layer — auto-saves decisions, conventions, and context across sessions"
     }

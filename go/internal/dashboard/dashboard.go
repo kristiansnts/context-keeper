@@ -2,19 +2,39 @@ package dashboard
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sync"
+	"syscall"
 
 	"github.com/context-keeper/context-keeper/internal/storage"
 )
 
 // Start launches the dashboard HTTP server in the background.
+// If the port is already bound (another CLI has the dashboard), it skips
+// starting a second server — both CLIs share the same SQLite DB so the
+// existing dashboard already shows all memory.
 func Start(store *storage.Storage, port string) {
 	if port == "" {
 		port = "7373"
+	}
+
+	addr := "127.0.0.1:" + port
+
+	// Try to claim the port before starting the full server.
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		if isAddrInUse(err) {
+			// Another CLI instance already owns the dashboard — that's fine.
+			fmt.Fprintf(os.Stderr, "[context-keeper] dashboard already running at http://localhost:%s\n", port)
+			return
+		}
+		fmt.Fprintf(os.Stderr, "[context-keeper] dashboard: %v\n", err)
+		return
 	}
 
 	hub := &sseHub{clients: make(map[chan []byte]struct{})}
@@ -32,11 +52,21 @@ func Start(store *storage.Storage, port string) {
 	mux.HandleFunc("/", serveUI)
 
 	go func() {
-		addr := "127.0.0.1:" + port
-		if err := http.ListenAndServe(addr, mux); err != nil {
+		if err := http.Serve(ln, mux); err != nil {
 			fmt.Fprintf(os.Stderr, "[context-keeper] dashboard: %v\n", err)
 		}
 	}()
+}
+
+func isAddrInUse(err error) bool {
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		var syscallErr *os.SyscallError
+		if errors.As(opErr.Err, &syscallErr) {
+			return errors.Is(syscallErr.Err, syscall.EADDRINUSE)
+		}
+	}
+	return false
 }
 
 // ── SSE hub ───────────────────────────────────────────────────────────────────
@@ -366,15 +396,18 @@ async function loadProjects() {
   } catch (_) {}
 }
 
-// ── SSE live feed ─────────────────────────────────────────────────────────────
+// ── SSE live feed + cross-process polling ─────────────────────────────────────
+// SSE gives instant updates for entries saved by the process that owns the
+// dashboard. Polling every 5s catches entries from other CLI processes (e.g.
+// Copilot CLI) that share the same DB but don't own the dashboard port.
+let liveSeenIds = new Set();
+
 function connectSSE() {
   const es = new EventSource('/events');
   es.addEventListener('memory', ev => {
     const entry = JSON.parse(ev.data);
-    const liveTab = document.getElementById('tab-live');
-    const empty = liveTab.querySelector('.empty');
-    if (empty) empty.remove();
-    liveTab.insertAdjacentHTML('afterbegin', renderEntry(entry, true));
+    liveSeenIds.add(entry.ID);
+    prependLiveEntry(entry);
   });
   es.onopen = () => {
     document.getElementById('status-text').textContent = 'Connected';
@@ -388,9 +421,42 @@ function connectSSE() {
   };
 }
 
+function prependLiveEntry(entry) {
+  const liveTab = document.getElementById('tab-live');
+  const empty = liveTab.querySelector('.empty');
+  if (empty) empty.remove();
+  liveTab.insertAdjacentHTML('afterbegin', renderEntry(entry, true));
+}
+
+// Poll for entries not yet seen in live feed (from other CLI processes).
+async function pollLiveFeed() {
+  try {
+    const res = await fetch('/api/entries');
+    const entries = await res.json();
+    if (!entries) return;
+    // Prepend any new IDs in reverse order to maintain newest-first
+    const unseen = entries.filter(e => !liveSeenIds.has(e.ID));
+    unseen.reverse().forEach(e => {
+      liveSeenIds.add(e.ID);
+      prependLiveEntry(e);
+    });
+  } catch (_) {}
+}
+
+// Seed seen IDs on load so existing entries don't flood the live feed.
+async function initLiveFeed() {
+  try {
+    const res = await fetch('/api/entries');
+    const entries = await res.json();
+    if (entries) entries.forEach(e => liveSeenIds.add(e.ID));
+  } catch (_) {}
+}
+
+setInterval(pollLiveFeed, 5000);
+
 // ── init ──────────────────────────────────────────────────────────────────────
 loadProjects();
-connectSSE();
+initLiveFeed().then(connectSSE);
 </script>
 </body>
 </html>`

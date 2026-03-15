@@ -462,11 +462,10 @@ func insertEntry(db *sql.DB, e Entry) (int64, error) {
 }
 
 func ftsSearch(db *sql.DB, query string, limit int, mode, modeArg string) ([]SearchResult, error) {
-	sanitized := sanitizeQuery(query)
-	if sanitized == "" {
+	ftsQuery := sanitizeQuery(query)
+	if ftsQuery == "" {
 		return nil, nil
 	}
-	ftsQuery := sanitized + "*"
 
 	var rows *sql.Rows
 	var err error
@@ -590,9 +589,26 @@ func scanEntries(rows *sql.Rows) ([]Entry, error) {
 	return results, rows.Err()
 }
 
+// sanitizeQuery converts a natural language query into an FTS5 OR-prefix query.
+// "storage backend database" → "storage* OR backend* OR database*"
+// This ensures any matching word returns results, not just entries containing all words.
 func sanitizeQuery(q string) string {
 	q = strings.ReplaceAll(q, "'", " ")
 	q = strings.ReplaceAll(q, `"`, " ")
 	q = strings.ReplaceAll(q, "*", " ")
-	return strings.TrimSpace(q)
+	q = strings.TrimSpace(q)
+	if q == "" {
+		return ""
+	}
+	words := strings.Fields(q)
+	terms := make([]string, 0, len(words))
+	for _, w := range words {
+		if len(w) >= 2 { // skip single-char words
+			terms = append(terms, w+"*")
+		}
+	}
+	if len(terms) == 0 {
+		return ""
+	}
+	return strings.Join(terms, " OR ")
 }
