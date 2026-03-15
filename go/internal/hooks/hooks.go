@@ -78,20 +78,26 @@ func sessionStart(store *storage.Storage, cfg storage.Config) error {
 	_ = os.WriteFile(filepath.Join(ctxDir, "session-start.tmp"), []byte(time.Now().UTC().Format("2006-01-02 15:04:05")), 0644)
 
 	var sb strings.Builder
-	sb.WriteString("# Project Memory (context-keeper)\n\n")
+	sb.WriteString("# context-keeper\n\n")
+	sb.WriteString("## MANDATORY RULES — follow without being asked\n\n")
+	sb.WriteString("1. **Call `remember()` immediately** after every: decision made, bug fixed, pattern discovered, approach rejected, API endpoint touched, DB schema change, or file→feature mapping learned. Do NOT wait for the user to ask.\n")
+	sb.WriteString("2. **Call `search()` before starting any task** — check if relevant memory exists first.\n")
+	sb.WriteString("3. **One entry per insight** — never bundle multiple discoveries into one entry.\n\n")
+	sb.WriteString("Type → action mapping (use exactly these types):\n")
+	sb.WriteString("- made an architectural choice → `decision`\n")
+	sb.WriteString("- fixed a bug or hit an error → `gotcha`\n")
+	sb.WriteString("- found a reusable solution → `pattern`\n")
+	sb.WriteString("- tried something that failed → `rejected`\n")
+	sb.WriteString("- project coding convention → `convention`\n")
+	sb.WriteString("- which file owns feature X → `file-map`\n")
+	sb.WriteString("- API endpoint details → `api-catalog`\n")
+	sb.WriteString("- DB table/field/schema → `schema`\n")
+	sb.WriteString("- cross-project knowledge → `workspace`\n\n")
 
 	if strings.HasPrefix(md, "<!-- empty -->") {
-		sb.WriteString("No memory saved yet.\n\n")
-		sb.WriteString("Action → type guide (save proactively without being asked):\n")
-		sb.WriteString("- bug / fix / error → type: \"gotcha\"\n")
-		sb.WriteString("- implement / add / build → type: \"decision\" or \"pattern\" (if reusable)\n")
-		sb.WriteString("- tried & abandoned approach → type: \"rejected\"\n")
-		sb.WriteString("- knowledge shared across all projects → type: \"workspace\"\n")
-		sb.WriteString("- map feature to files → type: \"file-map\"\n")
-		sb.WriteString("- document an API endpoint → type: \"api-catalog\"\n")
-		sb.WriteString("- document a DB table/field → type: \"schema\"\n")
+		sb.WriteString("## Project Memory\n\nNo entries yet — this session is your chance to start building it.\n")
 	} else {
-		sb.WriteString("Compact index — use `get([id])` for full details.\n\n")
+		sb.WriteString("## Project Memory (compact — use `get([id])` for full details)\n\n")
 		sb.WriteString(md + "\n")
 	}
 
@@ -189,7 +195,7 @@ func userPrompt(store *storage.Storage, cfg storage.Config) error {
 	}
 
 	if len(all) > 0 {
-		sb.WriteString("[context-keeper: relevant memory]\n")
+		sb.WriteString("[context-keeper] Relevant memory found — read before proceeding, then call remember() with anything new you discover:\n")
 		for _, r := range all {
 			source := ""
 			if r.Source != nil && *r.Source != "" {
@@ -487,9 +493,10 @@ func appendPromptHit(cfg storage.Config) error {
 // ── exit-plan-mode ────────────────────────────────────────────────────────────
 
 func exitPlanMode() error {
-	fmt.Print(`[context-keeper: Plan mode exited.
-- If this plan was REJECTED → call remember(type="rejected", title="[Plan] ...", content="what was proposed + why you rejected it + what you chose instead")
-- If this plan was ACCEPTED → it will be tracked via the implementation automatically]
+	fmt.Print(`[context-keeper] Plan mode exited — you MUST call remember() now:
+- Plan REJECTED → remember(type="rejected", title="[Plan] ...", content="what was proposed + why rejected + what you chose instead")
+- Plan ACCEPTED → remember(type="decision", title="[Plan] ...", content="what was decided + why") then implement
+Do not skip this step.
 `)
 	return nil
 }

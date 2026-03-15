@@ -4,19 +4,23 @@ All notable changes to context-keeper are documented here.
 
 ---
 
-## [Unreleased] — v0.1.0
+## [0.1.0] — 2026-03-15
 
 ### Added
-- **Auto-capture tool observations** — `PostToolUse: *` writes all meaningful tool calls to `.context/session-obs.jsonl`; noise filtered at `Stop` hook; session summary includes "Files changed", "Commands run", "Bash failures"
 - **3 new memory types**:
-  - `file-map` — maps features to the files that own them (e.g. "auth logic lives in `auth_service.go` + `auth_handler.go`")
-  - `api-catalog` — endpoint registry with method, path, auth flag, handler (e.g. `DELETE /teams/:id/members → requires admin`)
-  - `schema` — DB table/field definitions and types (e.g. "`playlist_teams.members` is a JSON string, not an array")
-- **Staleness tagging** — `staleness_risk: low|medium|high` field on entries + `last_verified_at` timestamp; Claude warned to distrust `high`-risk entries older than N commits
-- **Session telemetry** — `Stop` hook records `exploration_ratio` (read tool calls / total tool calls), `steps_before_first_edit`, `rediscovery_count` to measure context-keeper's effectiveness over time
+  - `file-map` — maps features to the files that own them (e.g. "auth logic lives in `auth_service.go` + `auth_handler.go`"); local-only, not mirrored
+  - `api-catalog` — endpoint registry with method, path, auth flag, handler (e.g. `DELETE /teams/:id/members → requires admin`); mirrored to workspace DB
+  - `schema` — DB table/field definitions and types (e.g. "`playlist_teams.members` is a JSON string, not an array"); mirrored to workspace DB
+- **Staleness tagging** — `staleness_risk: low|medium|high` column on all entries + `last_verified_at` timestamp; auto-defaults by type (`api-catalog`/`schema`/`file-map` → high, `decision`/`pattern` → medium, rest → low); optional param on `remember()` tool
+- **Session telemetry** — `PostToolUse` hook now captures `Read`/`Glob`/`Grep`/`LS` as `kind:"explore"` observations and `Edit`/`Write` as `kind:"edit"`; `Stop` hook computes `exploration_ratio`, `steps_before_first_edit`, and `files_explored` into every session summary
+- **Prompt hit tracking** — `UserPromptSubmit` hook increments a per-session counter whenever memory is injected; `Stop` hook writes `Prompt hits: N` into the session summary
+- **Dashboard stats bar** — five live metrics at the top of the dashboard: entries saved, memory hits, est. tokens saved, avg exploration ratio, sessions tracked; auto-refreshes every 30s from `/api/stats`
+- **3 new dashboard tabs** — File Map, API Catalog, Schema
+- **Dashboard auto-start** — `SessionStart` hook spawns a persistent `dashboard` subprocess if port 7373 is not already bound; dashboard survives session end and restarts automatically on next session
+- **Mandatory `remember()` prompt** — `SessionStart` output now leads with explicit rules: call `remember()` after every decision/fix/discovery without being asked; `ExitPlanMode` also enforces a `remember()` call on plan accept/reject
 
 ### Why
-Research session data showed **84.6% of tool calls were exploration** (grep/read to answer "does X exist?"). These are cacheable. The three new types (`file-map`, `api-catalog`, `schema`) directly address the most common rediscovery patterns. Target: reduce `exploration_ratio` from ~85% to ~30%.
+Research across two sessions (8 days, 2,206 tool calls) showed **84.6% of tool calls were exploration** — reading files to answer "does X exist?". Eight rediscovery events wasted 50,150 tokens. The new types (`file-map`, `api-catalog`, `schema`) directly cache the most common rediscovery patterns. Target: reduce `exploration_ratio` from ~85% to ~30% over time.
 
 ---
 
@@ -104,7 +108,4 @@ Research session data showed **84.6% of tool calls were exploration** (grep/read
 
 ## Roadmap
 
-- `v0.1.0` — Auto-observation capture + 3 new types (`file-map`, `api-catalog`, `schema`) + staleness tagging + session telemetry (next)
-- `v0.2.0` — Stable release with docs site
-- Semantic search (embeddings) as opt-in
-- Web UI for manual memory editing
+- `v0.2.0` — Stable release with docs site, semantic search (embeddings) as opt-in, web UI for manual memory editing
