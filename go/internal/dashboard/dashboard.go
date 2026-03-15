@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 
@@ -48,6 +50,7 @@ func Start(store *storage.Storage, port string) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/entries", apiEntries(store))
 	mux.HandleFunc("/api/projects", apiProjects(store))
+	mux.HandleFunc("/api/stats", apiStats(store))
 	mux.HandleFunc("/events", sseHandler(hub))
 	mux.HandleFunc("/", serveUI)
 
@@ -180,6 +183,65 @@ func apiProjects(store *storage.Storage) http.HandlerFunc {
 	}
 }
 
+type statsResponse struct {
+	TotalEntries    int     `json:"total_entries"`
+	TotalSessions   int     `json:"total_sessions"`
+	TotalHits       int     `json:"total_hits"`
+	AvgExploreRatio float64 `json:"avg_explore_ratio"`
+	EstTokensSaved  int     `json:"est_tokens_saved"`
+}
+
+func apiStats(store *storage.Storage) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		entries, err := store.ListAll("all")
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		stats := statsResponse{}
+		stats.TotalEntries = len(entries)
+
+		var ratioSum float64
+		var ratioCount int
+
+		for _, e := range entries {
+			if e.Type != "session" {
+				continue
+			}
+			stats.TotalSessions++
+			for _, line := range strings.Split(e.Content, "\n") {
+				if strings.HasPrefix(line, "Prompt hits: ") {
+					parts := strings.Fields(line)
+					if len(parts) >= 3 {
+						if n, err := strconv.Atoi(parts[2]); err == nil {
+							stats.TotalHits += n
+						}
+					}
+				}
+				if strings.HasPrefix(line, "Exploration ratio: ") {
+					// "Exploration ratio: 85% (11/13)"
+					rest := strings.TrimPrefix(line, "Exploration ratio: ")
+					pct := strings.TrimSuffix(strings.Fields(rest)[0], "%")
+					if f, err := strconv.ParseFloat(pct, 64); err == nil {
+						ratioSum += f
+						ratioCount++
+					}
+				}
+			}
+		}
+
+		if ratioCount > 0 {
+			stats.AvgExploreRatio = ratioSum / float64(ratioCount)
+		}
+		stats.EstTokensSaved = stats.TotalHits * 600
+
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		_ = json.NewEncoder(w).Encode(stats)
+	}
+}
+
 func serveUI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write([]byte(uiHTML))
@@ -244,6 +306,9 @@ var uiHTML = `<!DOCTYPE html>
     .badge-session    { background: #1a2a3a; color: #4dd0e1; }
     .badge-pattern    { background: #1a3a2a; color: #69f0ae; }
     .badge-workspace  { background: #2a2a0a; color: #fff176; }
+    .badge-file-map   { background: #0a2a3a; color: #80deea; }
+    .badge-api-catalog { background: #1a0a3a; color: #b39ddb; }
+    .badge-schema     { background: #2a1a0a; color: #ffcc80; }
     .entry-title { font-size: 14px; font-weight: 500; color: #fff; flex: 1; }
     .entry-id { font-size: 11px; color: #444; margin-left: auto; flex-shrink: 0; }
     .entry-supersedes { font-size: 11px; color: #f0a050; }
@@ -253,6 +318,13 @@ var uiHTML = `<!DOCTYPE html>
     .tag { font-size: 11px; background: #222; color: #777; padding: 2px 6px; border-radius: 4px; }
     .entry-meta { font-size: 11px; color: #444; margin-top: 6px; }
     .source-badge { font-size: 11px; color: #4caf50; margin-left: 6px; }
+
+    /* Stats bar */
+    #stats-bar { background: #141414; border-bottom: 1px solid #2a2a2a; display: flex; gap: 0; padding: 8px 20px; flex-shrink: 0; overflow-x: auto; }
+    .stat { display: flex; flex-direction: column; align-items: center; padding: 4px 20px; border-right: 1px solid #222; min-width: 100px; }
+    .stat:last-child { border-right: none; }
+    .stat span { font-size: 18px; font-weight: 700; color: #4caf50; line-height: 1.2; }
+    .stat label { font-size: 10px; color: #555; text-transform: uppercase; letter-spacing: 0.08em; margin-top: 2px; white-space: nowrap; }
 
     /* Scrollbar */
     ::-webkit-scrollbar { width: 5px; height: 5px; }
@@ -273,6 +345,14 @@ var uiHTML = `<!DOCTYPE html>
     </div>
   </header>
 
+  <div id="stats-bar">
+    <div class="stat"><span id="stat-entries">—</span><label>entries saved</label></div>
+    <div class="stat"><span id="stat-hits">—</span><label>memory hits</label></div>
+    <div class="stat"><span id="stat-tokens">—</span><label>est. tokens saved</label></div>
+    <div class="stat"><span id="stat-ratio">—</span><label>avg explore ratio</label></div>
+    <div class="stat"><span id="stat-sessions">—</span><label>sessions tracked</label></div>
+  </div>
+
   <div class="tabs">
     <div class="tab active" onclick="showTab('live')">Live Feed</div>
     <div class="tab" onclick="showTab('decisions')">Decisions</div>
@@ -282,6 +362,9 @@ var uiHTML = `<!DOCTYPE html>
     <div class="tab" onclick="showTab('rejected')">Rejected</div>
     <div class="tab" onclick="showTab('workspace')">Workspace</div>
     <div class="tab" onclick="showTab('sessions')">Sessions</div>
+    <div class="tab" onclick="showTab('file-map')">File Map</div>
+    <div class="tab" onclick="showTab('api-catalog')">API Catalog</div>
+    <div class="tab" onclick="showTab('schema')">Schema</div>
     <div class="tab" onclick="showTab('all')">All Memory</div>
   </div>
 
@@ -294,12 +377,15 @@ var uiHTML = `<!DOCTYPE html>
     <div id="tab-rejected" style="display:none"></div>
     <div id="tab-workspace" style="display:none"></div>
     <div id="tab-sessions" style="display:none"></div>
+    <div id="tab-file-map" style="display:none"></div>
+    <div id="tab-api-catalog" style="display:none"></div>
+    <div id="tab-schema" style="display:none"></div>
     <div id="tab-all" style="display:none"></div>
   </main>
 
 <script>
-const TABS = ['live','decisions','conventions','gotchas','patterns','rejected','workspace','sessions','all'];
-const TYPE_MAP = { decisions:'decision', conventions:'convention', gotchas:'gotcha', patterns:'pattern', rejected:'rejected', workspace:'workspace', sessions:'session', all:'' };
+const TABS = ['live','decisions','conventions','gotchas','patterns','rejected','workspace','sessions','file-map','api-catalog','schema','all'];
+const TYPE_MAP = { decisions:'decision', conventions:'convention', gotchas:'gotcha', patterns:'pattern', rejected:'rejected', workspace:'workspace', sessions:'session', 'file-map':'file-map', 'api-catalog':'api-catalog', schema:'schema', all:'' };
 
 let currentTab = 'live';
 let currentProject = '';
@@ -454,8 +540,37 @@ async function initLiveFeed() {
 
 setInterval(pollLiveFeed, 5000);
 
+// ── stats ─────────────────────────────────────────────────────────────────────
+function animateNumber(el, target, suffix) {
+  const start = 0;
+  const duration = 600;
+  const startTime = performance.now();
+  function step(now) {
+    const progress = Math.min((now - startTime) / duration, 1);
+    const val = Math.round(progress * target);
+    el.textContent = val + (suffix || '');
+    if (progress < 1) requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
+}
+
+async function loadStats() {
+  try {
+    const res = await fetch('/api/stats');
+    const s = await res.json();
+    animateNumber(document.getElementById('stat-entries'), s.total_entries, '');
+    animateNumber(document.getElementById('stat-hits'), s.total_hits, '');
+    animateNumber(document.getElementById('stat-tokens'), s.est_tokens_saved, '');
+    document.getElementById('stat-ratio').textContent = s.avg_explore_ratio ? s.avg_explore_ratio.toFixed(0) + '%' : '—';
+    animateNumber(document.getElementById('stat-sessions'), s.total_sessions, '');
+  } catch (_) {}
+}
+
+setInterval(loadStats, 30000);
+
 // ── init ──────────────────────────────────────────────────────────────────────
 loadProjects();
+loadStats();
 initLiveFeed().then(connectSSE);
 </script>
 </body>

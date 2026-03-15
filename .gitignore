@@ -5,6 +5,7 @@ dist/
 !*.config.js
 .env
 .env.local
+docs/
 
 # context-keeper local DB and session state
 .context

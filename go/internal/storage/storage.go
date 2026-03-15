@@ -16,26 +16,30 @@ import (
 var ValidTypes = []string{
 	"decision", "convention", "gotcha", "context",
 	"note", "session", "rejected", "pattern", "workspace",
+	"file-map", "api-catalog", "schema",
 }
 
 // WorkspaceMirrorTypes are mirrored to workspace/global DBs.
 var WorkspaceMirrorTypes = map[string]bool{
 	"decision": true, "pattern": true, "workspace": true, "rejected": true,
+	"api-catalog": true, "schema": true,
 }
 
 // Entry represents a memory record.
 type Entry struct {
-	ID           int64
-	Type         string
-	Title        string
-	Content      string
-	Tags         []string
-	Source       *string
-	Status       string
-	SupersedesID *int64
-	ChangeReason *string
-	CreatedAt    string
-	UpdatedAt    string
+	ID              int64
+	Type            string
+	Title           string
+	Content         string
+	Tags            []string
+	Source          *string
+	Status          string
+	SupersedesID    *int64
+	ChangeReason    *string
+	CreatedAt       string
+	UpdatedAt       string
+	StalenessRisk   string
+	LastVerifiedAt  string
 }
 
 // SearchResult wraps Entry with a relevance score.
@@ -293,7 +297,7 @@ func (s *Storage) ListGlobalByProject(source, typ string) ([]Entry, error) {
 		args = append(args, typ)
 	}
 	rows, err := s.globalDb.Query(
-		`SELECT id,type,title,content,tags,source,status,supersedes_id,change_reason,created_at,updated_at
+		`SELECT id,type,title,content,tags,source,status,supersedes_id,change_reason,created_at,updated_at,staleness_risk,last_verified_at
 		 FROM memory WHERE `+where+` ORDER BY updated_at DESC LIMIT 500`, args...)
 	if err != nil {
 		return nil, err
@@ -449,9 +453,11 @@ func migrate(db *sql.DB) error {
 	}
 
 	needed := map[string]string{
-		"status":        `ALTER TABLE memory ADD COLUMN status TEXT NOT NULL DEFAULT 'active'`,
-		"supersedes_id": `ALTER TABLE memory ADD COLUMN supersedes_id INTEGER`,
-		"change_reason": `ALTER TABLE memory ADD COLUMN change_reason TEXT`,
+		"status":          `ALTER TABLE memory ADD COLUMN status TEXT NOT NULL DEFAULT 'active'`,
+		"supersedes_id":   `ALTER TABLE memory ADD COLUMN supersedes_id INTEGER`,
+		"change_reason":   `ALTER TABLE memory ADD COLUMN change_reason TEXT`,
+		"staleness_risk":  `ALTER TABLE memory ADD COLUMN staleness_risk TEXT NOT NULL DEFAULT 'low'`,
+		"last_verified_at": `ALTER TABLE memory ADD COLUMN last_verified_at TEXT NOT NULL DEFAULT ''`,
 	}
 	for col, stmt := range needed {
 		if !existing[col] {
@@ -464,11 +470,21 @@ func migrate(db *sql.DB) error {
 }
 
 func insertEntry(db *sql.DB, e Entry) (int64, error) {
+	if e.StalenessRisk == "" {
+		switch e.Type {
+		case "api-catalog", "schema", "file-map":
+			e.StalenessRisk = "high"
+		case "decision", "convention", "pattern", "workspace":
+			e.StalenessRisk = "medium"
+		default:
+			e.StalenessRisk = "low"
+		}
+	}
 	tagsJSON, _ := json.Marshal(e.Tags)
 	res, err := db.Exec(
-		`INSERT INTO memory (type, title, content, tags, source, supersedes_id, change_reason)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		e.Type, e.Title, e.Content, string(tagsJSON), e.Source, e.SupersedesID, e.ChangeReason,
+		`INSERT INTO memory (type, title, content, tags, source, supersedes_id, change_reason, staleness_risk)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.Type, e.Title, e.Content, string(tagsJSON), e.Source, e.SupersedesID, e.ChangeReason, e.StalenessRisk,
 	)
 	if err != nil {
 		return 0, err
@@ -523,7 +539,7 @@ func ftsSearch(db *sql.DB, query string, limit int, mode, modeArg string) ([]Sea
 		err := rows.Scan(
 			&e.ID, &e.Type, &e.Title, &e.Content, &tagsStr,
 			&source, &e.Status, &supersedesID, &changeReason,
-			&e.CreatedAt, &e.UpdatedAt, &score,
+			&e.CreatedAt, &e.UpdatedAt, &e.StalenessRisk, &e.LastVerifiedAt, &score,
 		)
 		if err != nil {
 			continue
@@ -555,7 +571,7 @@ func scanEntry(row *sql.Row) (Entry, error) {
 	err := row.Scan(
 		&e.ID, &e.Type, &e.Title, &e.Content, &tagsStr,
 		&source, &e.Status, &supersedesID, &changeReason,
-		&e.CreatedAt, &e.UpdatedAt,
+		&e.CreatedAt, &e.UpdatedAt, &e.StalenessRisk, &e.LastVerifiedAt,
 	)
 	if err != nil {
 		return Entry{}, err
@@ -584,7 +600,7 @@ func scanEntries(rows *sql.Rows) ([]Entry, error) {
 		err := rows.Scan(
 			&e.ID, &e.Type, &e.Title, &e.Content, &tagsStr,
 			&source, &e.Status, &supersedesID, &changeReason,
-			&e.CreatedAt, &e.UpdatedAt,
+			&e.CreatedAt, &e.UpdatedAt, &e.StalenessRisk, &e.LastVerifiedAt,
 		)
 		if err != nil {
 			continue

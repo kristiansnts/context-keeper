@@ -42,6 +42,20 @@ func main() {
 		return
 	}
 
+	// Dashboard-only mode: persistent standalone server, no MCP stdio
+	if len(os.Args) >= 2 && os.Args[1] == "dashboard" {
+		store, err := storage.New(cfg)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "context-keeper: failed to open storage:", err)
+			os.Exit(1)
+		}
+		defer store.Close()
+		port := os.Getenv("CONTEXT_KEEPER_PORT")
+		dashboard.Start(store, port)
+		// Block forever — dashboard runs until process is killed
+		select {}
+	}
+
 	// MCP server mode (default)
 	s, err := mcpserver.NewServer(cfg)
 	if err != nil {

@@ -50,10 +50,13 @@ func registerTools(s *server.MCPServer, store *storage.Storage, cfg storage.Conf
 			"- refactor/restructure/migrate → type: decision\n"+
 			"- tried & abandoned → type: rejected\n"+
 			"- knowledge shared across all projects → type: workspace\n"+
-			"- coding convention for this project → type: convention"),
+			"- coding convention for this project → type: convention\n"+
+			"- map feature to files → type: file-map\n"+
+			"- document an API endpoint → type: api-catalog\n"+
+			"- document a DB table/field → type: schema"),
 		mcpgo.WithString("type",
 			mcpgo.Required(),
-			mcpgo.Enum("decision", "convention", "gotcha", "context", "note", "rejected", "pattern", "workspace", "session"),
+			mcpgo.Enum("decision", "convention", "gotcha", "context", "note", "rejected", "pattern", "workspace", "session", "file-map", "api-catalog", "schema"),
 			mcpgo.Description("The type of memory entry")),
 		mcpgo.WithString("title",
 			mcpgo.Required(),
@@ -63,17 +66,22 @@ func registerTools(s *server.MCPServer, store *storage.Storage, cfg storage.Conf
 			mcpgo.Description("Full explanation including reasoning")),
 		mcpgo.WithArray("tags",
 			mcpgo.Description("Optional tags for categorization")),
+		mcpgo.WithString("staleness_risk",
+			mcpgo.Enum("low", "medium", "high"),
+			mcpgo.Description("How quickly this entry may become stale. api-catalog/schema → high (auto-set if omitted); decision/pattern → medium; gotcha/note → low")),
 	), func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 		typ, _ := req.GetArguments()["type"].(string)
 		title, _ := req.GetArguments()["title"].(string)
 		content, _ := req.GetArguments()["content"].(string)
 		tags := parseTags(req.GetArguments()["tags"])
+		stalenessRisk, _ := req.GetArguments()["staleness_risk"].(string)
 
 		entry, err := store.Add(storage.Entry{
-			Type:    typ,
-			Title:   title,
-			Content: content,
-			Tags:    tags,
+			Type:          typ,
+			Title:         title,
+			Content:       content,
+			Tags:          tags,
+			StalenessRisk: stalenessRisk,
 		})
 		if err != nil {
 			return mcpgo.NewToolResultError(err.Error()), nil
@@ -178,7 +186,7 @@ func registerTools(s *server.MCPServer, store *storage.Storage, cfg storage.Conf
 		mcpgo.WithDescription("Load project memory. Returns compact index by default (token-efficient). "+
 			"Prefer calling context() then get([id]) for full details."),
 		mcpgo.WithString("type",
-			mcpgo.Enum("decision", "convention", "gotcha", "context", "note", "rejected", "pattern", "workspace", "session", "all"),
+			mcpgo.Enum("decision", "convention", "gotcha", "context", "note", "rejected", "pattern", "workspace", "session", "file-map", "api-catalog", "schema", "all"),
 			mcpgo.Description("Filter by type, default 'all'")),
 		mcpgo.WithBoolean("verbose",
 			mcpgo.Description("If true, return full content. Default false (compact index).")),

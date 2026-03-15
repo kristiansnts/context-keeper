@@ -3,7 +3,9 @@ package hooks
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -26,7 +28,7 @@ func Run(hookName string, cfg storage.Config) error {
 	case "stop":
 		return stop(store, cfg)
 	case "user-prompt":
-		return userPrompt(store)
+		return userPrompt(store, cfg)
 	case "post-tool-use":
 		return postToolUse(store, cfg)
 	case "exit-plan-mode":
@@ -36,9 +38,37 @@ func Run(hookName string, cfg storage.Config) error {
 	}
 }
 
+// ensureDashboard spawns the dashboard subprocess if the port is not already bound.
+func ensureDashboard(cfg storage.Config) {
+	port := os.Getenv("CONTEXT_KEEPER_PORT")
+	if port == "" {
+		port = "7373"
+	}
+	// If already listening, nothing to do
+	if conn, err := net.DialTimeout("tcp", "127.0.0.1:"+port, 200e6); err == nil {
+		conn.Close()
+		return
+	}
+	// Spawn dashboard subcommand detached from this process
+	self, err := os.Executable()
+	if err != nil {
+		return
+	}
+	cmd := exec.Command(self, "dashboard")
+	cmd.Env = append(os.Environ(), "CONTEXT_KEEPER_ROOT="+cfg.ProjectRoot)
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	detachCmd(cmd)
+	_ = cmd.Start()
+	// Don't wait — fire and forget
+}
+
 // ── session-start ─────────────────────────────────────────────────────────────
 
 func sessionStart(store *storage.Storage, cfg storage.Config) error {
+	// Auto-start dashboard if not already running
+	ensureDashboard(cfg)
+
 	md := markdown.GenerateContextMd(store.DB())
 	wsMd := markdown.GenerateWorkspaceContextMd(store.WorkspaceDB(), cfg.ProjectRoot)
 
@@ -57,6 +87,9 @@ func sessionStart(store *storage.Storage, cfg storage.Config) error {
 		sb.WriteString("- implement / add / build → type: \"decision\" or \"pattern\" (if reusable)\n")
 		sb.WriteString("- tried & abandoned approach → type: \"rejected\"\n")
 		sb.WriteString("- knowledge shared across all projects → type: \"workspace\"\n")
+		sb.WriteString("- map feature to files → type: \"file-map\"\n")
+		sb.WriteString("- document an API endpoint → type: \"api-catalog\"\n")
+		sb.WriteString("- document a DB table/field → type: \"schema\"\n")
 	} else {
 		sb.WriteString("Compact index — use `get([id])` for full details.\n\n")
 		sb.WriteString(md + "\n")
@@ -103,20 +136,32 @@ func stop(store *storage.Storage, cfg storage.Config) error {
 	obs := readObservations(obsFile)
 	_ = os.Remove(obsFile)
 
+	// Count prompt hits from tmp file
+	promptHits := 0
+	hitsFile := filepath.Join(cfg.ProjectRoot, ".context", "prompt-hits.tmp")
+	if hitsData, err := os.ReadFile(hitsFile); err == nil {
+		for _, line := range strings.Split(string(hitsData), "\n") {
+			if strings.TrimSpace(line) != "" {
+				promptHits++
+			}
+		}
+		_ = os.Remove(hitsFile)
+	}
+
 	gotchaCount := 0
 	for _, e := range sessionEntries {
 		if e.Type == "gotcha" {
 			gotchaCount++
 		}
 	}
-	obsContent := buildSessionSummaryFromObs(obs, gotchaCount)
+	obsContent := buildSessionSummaryFromObs(obs, gotchaCount, promptHits)
 
 	return store.AddSessionSummary(sessionEntries, obsContent)
 }
 
 // ── user-prompt ───────────────────────────────────────────────────────────────
 
-func userPrompt(store *storage.Storage) error {
+func userPrompt(store *storage.Storage, cfg storage.Config) error {
 	// Read stdin for the prompt text
 	stdinData, _ := readStdin()
 	prompt := extractPromptText(stdinData)
@@ -163,6 +208,7 @@ func userPrompt(store *storage.Storage) error {
 
 	if sb.Len() > 0 {
 		fmt.Print(sb.String())
+		_ = appendPromptHit(cfg)
 	}
 	return nil
 }
@@ -180,15 +226,8 @@ type rawObservation struct {
 	File string `json:"file,omitempty"`
 	Cmd  string `json:"cmd,omitempty"`
 	Exit *int   `json:"exit,omitempty"`
+	Kind string `json:"kind,omitempty"` // "explore" | "edit" | "run"
 	Ts   string `json:"ts"`
-}
-
-func isNoisyTool(name string) bool {
-	switch name {
-	case "Read", "Glob", "Grep", "LS", "WebFetch", "WebSearch", "Agent", "TodoRead", "TodoWrite":
-		return true
-	}
-	return false
 }
 
 func isNoisyBashCommand(cmd string) bool {
@@ -242,7 +281,7 @@ func readObservations(path string) []rawObservation {
 	return results
 }
 
-func buildSessionSummaryFromObs(obs []rawObservation, gotchaCount int) string {
+func buildSessionSummaryFromObs(obs []rawObservation, gotchaCount int, promptHits int) string {
 	var filesOrder []string
 	filesSeen := map[string]bool{}
 	var cmdsOrder []string
@@ -263,6 +302,28 @@ func buildSessionSummaryFromObs(obs []rawObservation, gotchaCount int) string {
 		}
 	}
 
+	// Exploration telemetry
+	exploreCount, totalCount := 0, len(obs)
+	stepsBeforeFirstEdit := -1
+	var exploredFiles []string
+	exploredSeen := map[string]bool{}
+
+	for i, o := range obs {
+		if o.Kind == "explore" {
+			exploreCount++
+			if o.File != "" {
+				base := filepath.Base(o.File)
+				if !exploredSeen[base] {
+					exploredSeen[base] = true
+					exploredFiles = append(exploredFiles, base)
+				}
+			}
+		}
+		if stepsBeforeFirstEdit == -1 && o.Kind == "edit" {
+			stepsBeforeFirstEdit = i
+		}
+	}
+
 	var sb strings.Builder
 	if len(filesOrder) > 0 {
 		fmt.Fprintf(&sb, "Files changed (%d): %s\n", len(filesOrder), strings.Join(filesOrder, ", "))
@@ -272,6 +333,23 @@ func buildSessionSummaryFromObs(obs []rawObservation, gotchaCount int) string {
 	}
 	if gotchaCount > 0 {
 		fmt.Fprintf(&sb, "Bash failures (%d): auto-captured as gotcha entries\n", gotchaCount)
+	}
+	if totalCount > 0 {
+		ratio := float64(exploreCount) / float64(totalCount) * 100
+		fmt.Fprintf(&sb, "Exploration ratio: %.0f%% (%d/%d)\n", ratio, exploreCount, totalCount)
+		if stepsBeforeFirstEdit >= 0 {
+			fmt.Fprintf(&sb, "Steps before first edit: %d\n", stepsBeforeFirstEdit)
+		}
+		if len(exploredFiles) > 0 {
+			shown := exploredFiles
+			if len(shown) > 8 {
+				shown = shown[:8]
+			}
+			fmt.Fprintf(&sb, "Files explored (%d): %s\n", len(exploredFiles), strings.Join(shown, ", "))
+		}
+	}
+	if promptHits > 0 {
+		fmt.Fprintf(&sb, "Prompt hits: %d (memory injected %d times this session)\n", promptHits, promptHits)
 	}
 	return sb.String()
 }
@@ -346,14 +424,31 @@ func postToolUse(store *storage.Storage, cfg storage.Config) error {
 				cmd = cmd[:200]
 			}
 			exit0 := 0
-			_ = appendObservation(cfg, rawObservation{Tool: "Bash", Cmd: cmd, Exit: &exit0})
+			_ = appendObservation(cfg, rawObservation{Tool: "Bash", Cmd: cmd, Exit: &exit0, Kind: "run"})
 		}
 		return nil
 	}
 
-	// Skip read-only / noisy tools
-	if isNoisyTool(toolName) {
+	// Capture explore observations for read-only tools
+	switch toolName {
+	case "Read", "Glob", "Grep", "LS":
+		var inp struct {
+			FilePath string `json:"file_path"`
+			Pattern  string `json:"pattern"`
+			Path     string `json:"path"`
+		}
+		_ = json.Unmarshal(input.ToolInput, &inp)
+		target := inp.FilePath
+		if target == "" {
+			target = inp.Pattern
+		}
+		if target == "" {
+			target = inp.Path
+		}
+		_ = appendObservation(cfg, rawObservation{Tool: toolName, File: target, Kind: "explore"})
 		return nil
+	case "WebFetch", "WebSearch", "Agent", "TodoRead", "TodoWrite":
+		return nil // skip — not project exploration
 	}
 
 	// File-editing tools
@@ -371,10 +466,22 @@ func postToolUse(store *storage.Storage, cfg storage.Config) error {
 		if filePath == "" {
 			return nil
 		}
-		_ = appendObservation(cfg, rawObservation{Tool: toolName, File: filePath})
+		_ = appendObservation(cfg, rawObservation{Tool: toolName, File: filePath, Kind: "edit"})
 	}
 
 	return nil
+}
+
+// appendPromptHit increments the per-session prompt hit counter.
+func appendPromptHit(cfg storage.Config) error {
+	path := filepath.Join(cfg.ProjectRoot, ".context", "prompt-hits.tmp")
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = fmt.Fprintln(f, "1")
+	return err
 }
 
 // ── exit-plan-mode ────────────────────────────────────────────────────────────
@@ -452,6 +559,20 @@ func detectTypeHint(prompt string) string {
 	for _, kw := range refactorKeywords {
 		if strings.Contains(lower, kw) {
 			return "architectural change — save as type 'decision'"
+		}
+	}
+
+	apiKeywords := []string{"endpoint", "route", "handler", "api"}
+	for _, kw := range apiKeywords {
+		if strings.Contains(lower, kw) {
+			return "API-related — document endpoints as type 'api-catalog'"
+		}
+	}
+
+	schemaKeywords := []string{"table", "schema", "column", "migration"}
+	for _, kw := range schemaKeywords {
+		if strings.Contains(lower, kw) {
+			return "DB-related — document tables/fields as type 'schema'"
 		}
 	}
 
