@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -365,28 +366,42 @@ func (s *Storage) SearchAll(query string, limit int) ([]SearchResult, error) {
 }
 
 // AddSessionSummary saves a session-type entry summarising entries created this session.
-func (s *Storage) AddSessionSummary(entries []Entry) error {
-	if len(entries) == 0 {
+// obsContent is prepended to the entry list (auto-captured tool observations).
+func (s *Storage) AddSessionSummary(entries []Entry, obsContent string) error {
+	if len(entries) == 0 && obsContent == "" {
 		return nil
 	}
 
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "%d entries saved this session:\n", len(entries))
-	for _, e := range entries {
-		firstLine := e.Content
-		if idx := strings.Index(firstLine, "\n"); idx != -1 {
-			firstLine = firstLine[:idx]
+	if obsContent != "" {
+		sb.WriteString(obsContent)
+		if len(entries) > 0 {
+			sb.WriteString("\n")
 		}
-		if len(firstLine) > 80 {
-			firstLine = firstLine[:80] + "…"
+	}
+	if len(entries) > 0 {
+		fmt.Fprintf(&sb, "%d entries saved this session:\n", len(entries))
+		for _, e := range entries {
+			firstLine := e.Content
+			if idx := strings.Index(firstLine, "\n"); idx != -1 {
+				firstLine = firstLine[:idx]
+			}
+			if len(firstLine) > 80 {
+				firstLine = firstLine[:80] + "…"
+			}
+			fmt.Fprintf(&sb, "- [%s] %s: %s\n", e.Type, e.Title, firstLine)
 		}
-		fmt.Fprintf(&sb, "- [%s] %s: %s\n", e.Type, e.Title, firstLine)
+	}
+
+	title := "Session " + time.Now().UTC().Format("2006-01-02 15:04")
+	if len(entries) > 0 {
+		title = fmt.Sprintf("Session %s", entries[0].CreatedAt[:16])
 	}
 
 	source := "stop-hook"
 	_, err := s.Add(Entry{
 		Type:    "session",
-		Title:   fmt.Sprintf("Session %s", entries[0].CreatedAt[:16]),
+		Title:   title,
 		Content: sb.String(),
 		Tags:    []string{"auto-saved"},
 		Source:  &source,

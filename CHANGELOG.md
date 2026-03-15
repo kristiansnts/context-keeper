@@ -4,7 +4,7 @@ All notable changes to context-keeper are documented here.
 
 ---
 
-## [Unreleased] — v0.0.3
+## [0.0.4] — Unreleased
 
 ### Added
 - **Web dashboard** completely redesigned to match the original TypeScript dashboard style

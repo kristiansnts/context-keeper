@@ -28,7 +28,7 @@ func Run(hookName string, cfg storage.Config) error {
 	case "user-prompt":
 		return userPrompt(store)
 	case "post-tool-use":
-		return postToolUse(store)
+		return postToolUse(store, cfg)
 	case "exit-plan-mode":
 		return exitPlanMode()
 	default:
@@ -99,7 +99,19 @@ func stop(store *storage.Storage, cfg storage.Config) error {
 		}
 	}
 
-	return store.AddSessionSummary(sessionEntries)
+	obsFile := filepath.Join(cfg.ProjectRoot, ".context", "session-obs.jsonl")
+	obs := readObservations(obsFile)
+	_ = os.Remove(obsFile)
+
+	gotchaCount := 0
+	for _, e := range sessionEntries {
+		if e.Type == "gotcha" {
+			gotchaCount++
+		}
+	}
+	obsContent := buildSessionSummaryFromObs(obs, gotchaCount)
+
+	return store.AddSessionSummary(sessionEntries, obsContent)
 }
 
 // ── user-prompt ───────────────────────────────────────────────────────────────
@@ -163,7 +175,108 @@ type toolUseInput struct {
 	ToolResponse json.RawMessage `json:"tool_response"`
 }
 
-func postToolUse(store *storage.Storage) error {
+type rawObservation struct {
+	Tool string `json:"tool"`
+	File string `json:"file,omitempty"`
+	Cmd  string `json:"cmd,omitempty"`
+	Exit *int   `json:"exit,omitempty"`
+	Ts   string `json:"ts"`
+}
+
+func isNoisyTool(name string) bool {
+	switch name {
+	case "Read", "Glob", "Grep", "LS", "WebFetch", "WebSearch", "Agent", "TodoRead", "TodoWrite":
+		return true
+	}
+	return false
+}
+
+func isNoisyBashCommand(cmd string) bool {
+	noisy := []string{"ls", "echo", "cat", "pwd", "which", "head", "tail", "grep", "find", "sed", "awk", "rg", "wc"}
+	fields := strings.Fields(cmd)
+	if len(fields) == 0 {
+		return false
+	}
+	word := strings.ToLower(fields[0])
+	for _, n := range noisy {
+		if word == n {
+			return true
+		}
+	}
+	return false
+}
+
+func appendObservation(cfg storage.Config, obs rawObservation) error {
+	obs.Ts = time.Now().UTC().Format(time.RFC3339)
+	data, err := json.Marshal(obs)
+	if err != nil {
+		return err
+	}
+	ctxDir := filepath.Join(cfg.ProjectRoot, ".context")
+	_ = os.MkdirAll(ctxDir, 0755)
+	f, err := os.OpenFile(filepath.Join(ctxDir, "session-obs.jsonl"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = f.Write(append(data, '\n'))
+	return err
+}
+
+func readObservations(path string) []rawObservation {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var results []rawObservation
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var obs rawObservation
+		if err := json.Unmarshal([]byte(line), &obs); err == nil {
+			results = append(results, obs)
+		}
+	}
+	return results
+}
+
+func buildSessionSummaryFromObs(obs []rawObservation, gotchaCount int) string {
+	var filesOrder []string
+	filesSeen := map[string]bool{}
+	var cmdsOrder []string
+	cmdsSeen := map[string]bool{}
+
+	for _, o := range obs {
+		switch o.Tool {
+		case "Edit", "Write", "NotebookEdit":
+			if o.File != "" && !filesSeen[o.File] {
+				filesSeen[o.File] = true
+				filesOrder = append(filesOrder, filepath.Base(o.File))
+			}
+		case "Bash":
+			if o.Cmd != "" && !cmdsSeen[o.Cmd] {
+				cmdsSeen[o.Cmd] = true
+				cmdsOrder = append(cmdsOrder, o.Cmd)
+			}
+		}
+	}
+
+	var sb strings.Builder
+	if len(filesOrder) > 0 {
+		fmt.Fprintf(&sb, "Files changed (%d): %s\n", len(filesOrder), strings.Join(filesOrder, ", "))
+	}
+	if len(cmdsOrder) > 0 {
+		fmt.Fprintf(&sb, "Commands run (%d): %s\n", len(cmdsOrder), strings.Join(cmdsOrder, ", "))
+	}
+	if gotchaCount > 0 {
+		fmt.Fprintf(&sb, "Bash failures (%d): auto-captured as gotcha entries\n", gotchaCount)
+	}
+	return sb.String()
+}
+
+func postToolUse(store *storage.Storage, cfg storage.Config) error {
 	stdinData, err := readStdin()
 	if err != nil || len(stdinData) == 0 {
 		return nil
@@ -174,66 +287,93 @@ func postToolUse(store *storage.Storage) error {
 		return nil
 	}
 
-	if input.ToolName != "Bash" && input.ToolName != "bash" {
-		return nil
-	}
+	toolName := input.ToolName
 
-	// Extract command, exit_code, stderr, stdout
-	var toolInput struct {
-		Command string `json:"command"`
-	}
-	var toolResponse struct {
-		ExitCode int    `json:"exit_code"`
-		Stderr   string `json:"stderr"`
-		Stdout   string `json:"stdout"`
-	}
-	_ = json.Unmarshal(input.ToolInput, &toolInput)
-	_ = json.Unmarshal(input.ToolResponse, &toolResponse)
+	// Bash path: handle failures and success separately
+	if strings.EqualFold(toolName, "Bash") {
+		var toolInput struct {
+			Command string `json:"command"`
+		}
+		var toolResponse struct {
+			ExitCode int    `json:"exit_code"`
+			Stderr   string `json:"stderr"`
+			Stdout   string `json:"stdout"`
+		}
+		_ = json.Unmarshal(input.ToolInput, &toolInput)
+		_ = json.Unmarshal(input.ToolResponse, &toolResponse)
 
-	// Only capture failures
-	if toolResponse.ExitCode == 0 && len(toolResponse.Stderr) <= 20 {
-		return nil
-	}
-
-	errorText := toolResponse.Stderr
-	if errorText == "" {
-		errorText = toolResponse.Stdout
-	}
-
-	// Skip transient signals
-	for _, skip := range []string{"interrupt", "killed", "SIGTERM", "SIGINT", "signal:"} {
-		if strings.Contains(strings.ToLower(errorText), strings.ToLower(skip)) {
+		// Failure path (existing logic)
+		if toolResponse.ExitCode != 0 || len(toolResponse.Stderr) > 20 {
+			errorText := toolResponse.Stderr
+			if errorText == "" {
+				errorText = toolResponse.Stdout
+			}
+			for _, skip := range []string{"interrupt", "killed", "SIGTERM", "SIGINT", "signal:"} {
+				if strings.Contains(strings.ToLower(errorText), strings.ToLower(skip)) {
+					return nil
+				}
+			}
+			existing, _ := store.Search(errorText, 1)
+			if len(existing) > 0 && existing[0].Score > 3 {
+				return nil
+			}
+			titleErr := errorText
+			if len(titleErr) > 60 {
+				titleErr = titleErr[:60]
+			}
+			cmd := toolInput.Command
+			if len(cmd) > 120 {
+				cmd = cmd[:120]
+			}
+			if len(errorText) > 500 {
+				errorText = errorText[:500]
+			}
+			source := "post-tool-use-hook"
+			_, _ = store.Add(storage.Entry{
+				Type:    "gotcha",
+				Title:   "[Auto] " + titleErr,
+				Content: fmt.Sprintf("Command: %s\n\nError:\n%s", cmd, errorText),
+				Tags:    []string{"auto-captured", "tool-failure"},
+				Source:  &source,
+			})
 			return nil
 		}
-	}
 
-	// Dedup: skip if similar entry already exists
-	existing, _ := store.Search(errorText, 1)
-	if len(existing) > 0 && existing[0].Score > 3 {
+		// Success path: append observation if not noisy
+		if toolInput.Command != "" && !isNoisyBashCommand(toolInput.Command) {
+			cmd := toolInput.Command
+			if len(cmd) > 200 {
+				cmd = cmd[:200]
+			}
+			exit0 := 0
+			_ = appendObservation(cfg, rawObservation{Tool: "Bash", Cmd: cmd, Exit: &exit0})
+		}
 		return nil
 	}
 
-	// Truncate for title/content
-	titleErr := errorText
-	if len(titleErr) > 60 {
-		titleErr = titleErr[:60]
-	}
-	cmd := toolInput.Command
-	if len(cmd) > 120 {
-		cmd = cmd[:120]
-	}
-	if len(errorText) > 500 {
-		errorText = errorText[:500]
+	// Skip read-only / noisy tools
+	if isNoisyTool(toolName) {
+		return nil
 	}
 
-	source := "post-tool-use-hook"
-	_, _ = store.Add(storage.Entry{
-		Type:    "gotcha",
-		Title:   "[Auto] " + titleErr,
-		Content: fmt.Sprintf("Command: %s\n\nError:\n%s", cmd, errorText),
-		Tags:    []string{"auto-captured", "tool-failure"},
-		Source:  &source,
-	})
+	// File-editing tools
+	switch toolName {
+	case "Edit", "Write", "NotebookEdit":
+		var inp struct {
+			FilePath     string `json:"file_path"`
+			NotebookPath string `json:"notebook_path"`
+		}
+		_ = json.Unmarshal(input.ToolInput, &inp)
+		filePath := inp.FilePath
+		if filePath == "" {
+			filePath = inp.NotebookPath
+		}
+		if filePath == "" {
+			return nil
+		}
+		_ = appendObservation(cfg, rawObservation{Tool: toolName, File: filePath})
+	}
+
 	return nil
 }
 
