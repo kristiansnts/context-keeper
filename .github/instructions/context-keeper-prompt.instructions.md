@@ -1,0 +1,9 @@
+---
+applyTo: "**"
+---
+
+[context-keeper: if this becomes reusable, save as type 'pattern' or 'decision']
+[context-keeper] Relevant memory found — read before proceeding, then call remember() with anything new you discover:
+- [gotcha] **Claude won't save anything if not prompted by context — use own tools** [id:9]: Even with context-keeper installed and MCP tools available, Claude will not call…
+- [convention] **Build process: tsc then cp to plugin/server/index.js** [id:6]: After any TypeScript source change: `npm run build` compiles packages/core and p…
+- [context] **context-keeper is its own project** [id:3]: This repo IS the context-keeper plugin being developed. The plugin runs against …

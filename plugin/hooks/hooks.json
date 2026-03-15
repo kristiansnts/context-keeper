@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/server/start.js\" hook session-start 2>/dev/null || true",
+            "command": "CK_LOG=~/.context-keeper/hooks.log; mkdir -p ~/.context-keeper; echo \"[$(date -u +%FT%TZ)] SessionStart PLUGIN_ROOT=${CLAUDE_PLUGIN_ROOT}\" >> \"$CK_LOG\"; node \"${CLAUDE_PLUGIN_ROOT}/server/start.js\" hook session-start 2>> \"$CK_LOG\" && echo \"[$(date -u +%FT%TZ)] SessionStart OK\" >> \"$CK_LOG\" || echo \"[$(date -u +%FT%TZ)] SessionStart FAILED\" >> \"$CK_LOG\"; true",
             "timeout": 10
           }
         ]
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/server/start.js\" hook stop 2>/dev/null || true",
+            "command": "CK_LOG=~/.context-keeper/hooks.log; mkdir -p ~/.context-keeper; echo \"[$(date -u +%FT%TZ)] Stop\" >> \"$CK_LOG\"; node \"${CLAUDE_PLUGIN_ROOT}/server/start.js\" hook stop 2>> \"$CK_LOG\" && echo \"[$(date -u +%FT%TZ)] Stop OK\" >> \"$CK_LOG\" || echo \"[$(date -u +%FT%TZ)] Stop FAILED\" >> \"$CK_LOG\"; true",
             "timeout": 15
           }
         ]
@@ -27,7 +27,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/server/start.js\" hook user-prompt 2>/dev/null || true",
+            "command": "CK_LOG=~/.context-keeper/hooks.log; mkdir -p ~/.context-keeper; echo \"[$(date -u +%FT%TZ)] UserPromptSubmit\" >> \"$CK_LOG\"; node \"${CLAUDE_PLUGIN_ROOT}/server/start.js\" hook user-prompt 2>> \"$CK_LOG\" && echo \"[$(date -u +%FT%TZ)] UserPromptSubmit OK\" >> \"$CK_LOG\" || echo \"[$(date -u +%FT%TZ)] UserPromptSubmit FAILED\" >> \"$CK_LOG\"; true",
             "timeout": 5
           }
         ]
@@ -38,7 +38,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/server/start.js\" hook post-tool-use 2>/dev/null || true",
+            "command": "CK_LOG=~/.context-keeper/hooks.log; mkdir -p ~/.context-keeper; echo \"[$(date -u +%FT%TZ)] PostToolUse\" >> \"$CK_LOG\"; node \"${CLAUDE_PLUGIN_ROOT}/server/start.js\" hook post-tool-use 2>> \"$CK_LOG\" && echo \"[$(date -u +%FT%TZ)] PostToolUse OK\" >> \"$CK_LOG\" || echo \"[$(date -u +%FT%TZ)] PostToolUse FAILED\" >> \"$CK_LOG\"; true",
             "timeout": 8
           }
         ]
@@ -49,7 +49,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/server/start.js\" hook exit-plan-mode 2>/dev/null || true",
+            "command": "CK_LOG=~/.context-keeper/hooks.log; mkdir -p ~/.context-keeper; echo \"[$(date -u +%FT%TZ)] ExitPlanMode\" >> \"$CK_LOG\"; node \"${CLAUDE_PLUGIN_ROOT}/server/start.js\" hook exit-plan-mode 2>> \"$CK_LOG\" && echo \"[$(date -u +%FT%TZ)] ExitPlanMode OK\" >> \"$CK_LOG\" || echo \"[$(date -u +%FT%TZ)] ExitPlanMode FAILED\" >> \"$CK_LOG\"; true",
             "timeout": 5
           }
         ]

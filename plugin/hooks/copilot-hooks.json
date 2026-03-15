@@ -4,28 +4,28 @@
     "sessionStart": [
       {
         "type": "command",
-        "bash": "node \"${CLAUDE_PLUGIN_ROOT}/server/start.js\" hook session-start 2>/dev/null || true",
+        "bash": "CK_LOG=~/.context-keeper/hooks.log; mkdir -p ~/.context-keeper; echo \"[$(date -u +%FT%TZ)] sessionStart PLUGIN_ROOT=${CLAUDE_PLUGIN_ROOT}\" >> \"$CK_LOG\"; node \"${CLAUDE_PLUGIN_ROOT}/server/start.js\" hook session-start >> \"$CK_LOG\" 2>&1 && echo \"[$(date -u +%FT%TZ)] sessionStart OK\" >> \"$CK_LOG\" || echo \"[$(date -u +%FT%TZ)] sessionStart FAILED (exit $?)\" >> \"$CK_LOG\"; true",
         "timeoutSec": 10
       }
     ],
     "sessionEnd": [
       {
         "type": "command",
-        "bash": "node \"${CLAUDE_PLUGIN_ROOT}/server/start.js\" hook stop 2>/dev/null || true",
+        "bash": "CK_LOG=~/.context-keeper/hooks.log; mkdir -p ~/.context-keeper; echo \"[$(date -u +%FT%TZ)] sessionEnd\" >> \"$CK_LOG\"; node \"${CLAUDE_PLUGIN_ROOT}/server/start.js\" hook stop >> \"$CK_LOG\" 2>&1 && echo \"[$(date -u +%FT%TZ)] sessionEnd OK\" >> \"$CK_LOG\" || echo \"[$(date -u +%FT%TZ)] sessionEnd FAILED (exit $?)\" >> \"$CK_LOG\"; rm -f \"${CONTEXT_KEEPER_ROOT:-.}/.github/instructions/context-keeper-debug.instructions.md\"; true",
         "timeoutSec": 15
       }
     ],
     "userPromptSubmitted": [
       {
         "type": "command",
-        "bash": "node \"${CLAUDE_PLUGIN_ROOT}/server/start.js\" hook user-prompt 2>/dev/null || true",
+        "bash": "CK_LOG=~/.context-keeper/hooks.log; mkdir -p ~/.context-keeper; echo \"[$(date -u +%FT%TZ)] userPromptSubmitted\" >> \"$CK_LOG\"; node \"${CLAUDE_PLUGIN_ROOT}/server/start.js\" hook user-prompt >> \"$CK_LOG\" 2>&1 && echo \"[$(date -u +%FT%TZ)] userPromptSubmitted OK\" >> \"$CK_LOG\" || echo \"[$(date -u +%FT%TZ)] userPromptSubmitted FAILED (exit $?)\" >> \"$CK_LOG\"; CK_INSTR_DIR=\"${CONTEXT_KEEPER_ROOT:-.}/.github/instructions\"; mkdir -p \"$CK_INSTR_DIR\"; printf '---\\napplyTo: \"**\"\\n---\\n\\n## context-keeper hook log (last 30 lines)\\n\\n```\\n' > \"$CK_INSTR_DIR/context-keeper-debug.instructions.md\"; tail -30 \"$CK_LOG\" >> \"$CK_INSTR_DIR/context-keeper-debug.instructions.md\"; printf '```\\n' >> \"$CK_INSTR_DIR/context-keeper-debug.instructions.md\"; true",
         "timeoutSec": 5
       }
     ],
     "postToolUse": [
       {
         "type": "command",
-        "bash": "node \"${CLAUDE_PLUGIN_ROOT}/server/start.js\" hook post-tool-use 2>/dev/null || true",
+        "bash": "CK_LOG=~/.context-keeper/hooks.log; mkdir -p ~/.context-keeper; echo \"[$(date -u +%FT%TZ)] postToolUse\" >> \"$CK_LOG\"; node \"${CLAUDE_PLUGIN_ROOT}/server/start.js\" hook post-tool-use >> \"$CK_LOG\" 2>&1 && echo \"[$(date -u +%FT%TZ)] postToolUse OK\" >> \"$CK_LOG\" || echo \"[$(date -u +%FT%TZ)] postToolUse FAILED (exit $?)\" >> \"$CK_LOG\"; true",
         "timeoutSec": 8
       }
     ]

@@ -198,6 +198,7 @@ func cleanInstructionsFile(projectRoot string) {
 	dir := filepath.Join(projectRoot, ".github", "instructions")
 	_ = os.Remove(filepath.Join(dir, "context-keeper.instructions.md"))
 	_ = os.Remove(filepath.Join(dir, "context-keeper-prompt.instructions.md"))
+	_ = os.Remove(filepath.Join(dir, "context-keeper-debug.instructions.md"))
 	// Remove the instructions dir only if it's now empty
 	if entries, err := os.ReadDir(dir); err == nil && len(entries) == 0 {
 		_ = os.Remove(dir)
