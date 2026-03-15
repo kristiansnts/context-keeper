@@ -8,5 +8,6 @@
   "license": "MIT",
   "homepage": "https://github.com/kristiansnts/context-keeper",
   "hooks": "./hooks/hooks.json",
-  "mcpServers": "./.mcp.json"
+  "mcpServers": "./.mcp.json",
+  "skills": "./skills"
 }
