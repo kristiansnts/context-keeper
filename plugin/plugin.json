@@ -1,0 +1,13 @@
+{
+  "name": "context-keeper",
+  "version": "0.1.0",
+  "description": "Universal AI memory layer — auto-saves decisions, conventions, and context across sessions",
+  "author": {
+    "name": "kristiansnts"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/kristiansnts/context-keeper",
+  "hooks": "./hooks/copilot-hooks.json",
+  "mcpServers": "./.mcp.json",
+  "skills": "./skills"
+}

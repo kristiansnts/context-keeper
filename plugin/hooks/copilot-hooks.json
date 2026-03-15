@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "type": "command",
+        "bash": "node \"${CLAUDE_PLUGIN_ROOT}/server/start.js\" hook session-start 2>/dev/null || true",
+        "timeoutSec": 10
+      }
+    ],
+    "sessionEnd": [
+      {
+        "type": "command",
+        "bash": "node \"${CLAUDE_PLUGIN_ROOT}/server/start.js\" hook stop 2>/dev/null || true",
+        "timeoutSec": 15
+      }
+    ],
+    "userPromptSubmitted": [
+      {
+        "type": "command",
+        "bash": "node \"${CLAUDE_PLUGIN_ROOT}/server/start.js\" hook user-prompt 2>/dev/null || true",
+        "timeoutSec": 5
+      }
+    ],
+    "postToolUse": [
+      {
+        "type": "command",
+        "bash": "node \"${CLAUDE_PLUGIN_ROOT}/server/start.js\" hook post-tool-use 2>/dev/null || true",
+        "timeoutSec": 8
+      }
+    ]
+  }
+}

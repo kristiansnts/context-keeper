@@ -106,8 +106,32 @@ func sessionStart(store *storage.Storage, cfg storage.Config) error {
 		sb.WriteString(wsMd + "\n")
 	}
 
-	fmt.Print(sb.String())
+	content := sb.String()
+
+	// Print to stdout for Claude Code (which injects hook stdout into system prompt).
+	fmt.Print(content)
+
+	// Also write to .github/instructions/ for Copilot CLI, which ignores hook stdout
+	// but reads custom instruction files before each prompt.
+	writeInstructionsFile(cfg.ProjectRoot, content)
+
 	return nil
+}
+
+// writeInstructionsFile writes context-keeper rules and memory to
+// .github/instructions/context-keeper.instructions.md so Copilot CLI
+// picks it up as custom instructions (hook stdout is ignored by Copilot).
+func writeInstructionsFile(projectRoot, content string) {
+	dir := filepath.Join(projectRoot, ".github", "instructions")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return
+	}
+	frontmatter := "---\napplyTo: \"**\"\n---\n\n"
+	_ = os.WriteFile(
+		filepath.Join(dir, "context-keeper.instructions.md"),
+		[]byte(frontmatter+content),
+		0644,
+	)
 }
 
 // ── stop ──────────────────────────────────────────────────────────────────────
@@ -162,7 +186,22 @@ func stop(store *storage.Storage, cfg storage.Config) error {
 	}
 	obsContent := buildSessionSummaryFromObs(obs, gotchaCount, promptHits)
 
-	return store.AddSessionSummary(sessionEntries, obsContent)
+	if err := store.AddSessionSummary(sessionEntries, obsContent); err != nil {
+		return err
+	}
+	cleanInstructionsFile(cfg.ProjectRoot)
+	return nil
+}
+
+// cleanInstructionsFile removes the context-keeper instructions file written at session start.
+func cleanInstructionsFile(projectRoot string) {
+	path := filepath.Join(projectRoot, ".github", "instructions", "context-keeper.instructions.md")
+	_ = os.Remove(path)
+	// Remove the instructions dir only if it's now empty
+	dir := filepath.Dir(path)
+	if entries, err := os.ReadDir(dir); err == nil && len(entries) == 0 {
+		_ = os.Remove(dir)
+	}
 }
 
 // ── user-prompt ───────────────────────────────────────────────────────────────
@@ -221,10 +260,21 @@ func userPrompt(store *storage.Storage, cfg storage.Config) error {
 
 // ── post-tool-use ─────────────────────────────────────────────────────────────
 
+// toolUseInput is the Claude Code hook input format.
 type toolUseInput struct {
 	ToolName     string          `json:"tool_name"`
 	ToolInput    json.RawMessage `json:"tool_input"`
 	ToolResponse json.RawMessage `json:"tool_response"`
+}
+
+// copilotToolUseInput is the Copilot CLI hook input format.
+type copilotToolUseInput struct {
+	ToolName   string `json:"toolName"`
+	ToolArgs   string `json:"toolArgs"` // JSON-encoded string
+	ToolResult struct {
+		ResultType      string `json:"resultType"`      // "success" | "failure" | "denied"
+		TextResultForLlm string `json:"textResultForLlm"`
+	} `json:"toolResult"`
 }
 
 type rawObservation struct {
@@ -366,8 +416,114 @@ func postToolUse(store *storage.Storage, cfg storage.Config) error {
 		return nil
 	}
 
+	// Try to detect format: Copilot CLI uses camelCase "toolName", Claude Code uses "tool_name".
+	var rawMap map[string]json.RawMessage
+	if err := json.Unmarshal(stdinData, &rawMap); err != nil {
+		return nil
+	}
+
+	if _, isCopilot := rawMap["toolName"]; isCopilot {
+		return postToolUseCopilot(store, cfg, stdinData)
+	}
+	return postToolUseClaudeCode(store, cfg, stdinData)
+}
+
+// postToolUseCopilot handles Copilot CLI's postToolUse input format.
+func postToolUseCopilot(store *storage.Storage, cfg storage.Config, data []byte) error {
+	var input copilotToolUseInput
+	if err := json.Unmarshal(data, &input); err != nil {
+		return nil
+	}
+
+	toolName := strings.ToLower(input.ToolName)
+
+	// Parse toolArgs (it's a JSON-encoded string in Copilot CLI)
+	var toolArgs map[string]interface{}
+	_ = json.Unmarshal([]byte(input.ToolArgs), &toolArgs)
+
+	// Bash / shell failure → auto-capture gotcha
+	if toolName == "bash" || toolName == "shell" {
+		if input.ToolResult.ResultType == "failure" {
+			errorText := input.ToolResult.TextResultForLlm
+			cmd := ""
+			if c, ok := toolArgs["command"].(string); ok {
+				cmd = c
+			}
+
+			for _, skip := range []string{"interrupt", "killed", "SIGTERM", "SIGINT", "signal:"} {
+				if strings.Contains(strings.ToLower(errorText), strings.ToLower(skip)) {
+					return nil
+				}
+			}
+			existing, _ := store.Search(errorText, 1)
+			if len(existing) > 0 && existing[0].Score > 3 {
+				return nil
+			}
+			titleErr := errorText
+			if len(titleErr) > 60 {
+				titleErr = titleErr[:60]
+			}
+			if len(cmd) > 120 {
+				cmd = cmd[:120]
+			}
+			if len(errorText) > 500 {
+				errorText = errorText[:500]
+			}
+			source := "post-tool-use-hook"
+			_, _ = store.Add(storage.Entry{
+				Type:    "gotcha",
+				Title:   "[Auto] " + titleErr,
+				Content: fmt.Sprintf("Command: %s\n\nError:\n%s", cmd, errorText),
+				Tags:    []string{"auto-captured", "tool-failure"},
+				Source:  &source,
+			})
+			return nil
+		}
+		// Success: record observation if not noisy
+		if cmd, ok := toolArgs["command"].(string); ok && cmd != "" && !isNoisyBashCommand(cmd) {
+			if len(cmd) > 200 {
+				cmd = cmd[:200]
+			}
+			exit0 := 0
+			_ = appendObservation(cfg, rawObservation{Tool: "Bash", Cmd: cmd, Exit: &exit0, Kind: "run"})
+		}
+		return nil
+	}
+
+	// Map Copilot tool names to observation kinds.
+	switch toolName {
+	case "view", "glob", "grep":
+		target := ""
+		for _, k := range []string{"path", "pattern", "file_path"} {
+			if v, ok := toolArgs[k].(string); ok && v != "" {
+				target = v
+				break
+			}
+		}
+		_ = appendObservation(cfg, rawObservation{Tool: strings.Title(toolName), File: target, Kind: "explore"})
+	case "edit", "create":
+		filePath := ""
+		for _, k := range []string{"path", "file_path"} {
+			if v, ok := toolArgs[k].(string); ok && v != "" {
+				filePath = v
+				break
+			}
+		}
+		if filePath != "" {
+			toolLabel := "Edit"
+			if toolName == "create" {
+				toolLabel = "Write"
+			}
+			_ = appendObservation(cfg, rawObservation{Tool: toolLabel, File: filePath, Kind: "edit"})
+		}
+	}
+	return nil
+}
+
+// postToolUseClaudeCode handles Claude Code's postToolUse input format.
+func postToolUseClaudeCode(store *storage.Storage, cfg storage.Config, data []byte) error {
 	var input toolUseInput
-	if err := json.Unmarshal(stdinData, &input); err != nil {
+	if err := json.Unmarshal(data, &input); err != nil {
 		return nil
 	}
 
